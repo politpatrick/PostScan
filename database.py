@@ -3,15 +3,19 @@ import os
 
 STAMMDATEN_PATH = os.path.join(os.path.dirname(__file__), "stammdaten.json")
 
-_DEFAULT_KOMBINATIONEN = [
-    {"dokumenttyp": "Rechnung", "absender": "HUK-COBURG"},
-    {"dokumenttyp": "Rechnung", "absender": "AOK Bayern"},
-    {"dokumenttyp": "Bescheid", "absender": "Finanzamt"},
-    {"dokumenttyp": "Vertrag", "absender": "Telekom"},
-    {"dokumenttyp": "Kontoauszug", "absender": "Sparkasse"},
-    {"dokumenttyp": "Brief", "absender": "Unbekannt"},
-]
-_DEFAULT_PERSONEN = ["Kunze"]
+_DEFAULTS = {
+    "dokumenttypen": ["Bescheid", "Brief", "Kontoauszug", "Rechnung", "Vertrag"],
+    "absender": ["AOK Bayern", "Finanzamt", "HUK-COBURG", "Sparkasse", "Telekom", "Unbekannt"],
+    "personen": ["Kunze"],
+    "kombinationen": [
+        {"dokumenttyp": "Rechnung",    "absender": "HUK-COBURG"},
+        {"dokumenttyp": "Rechnung",    "absender": "AOK Bayern"},
+        {"dokumenttyp": "Bescheid",    "absender": "Finanzamt"},
+        {"dokumenttyp": "Vertrag",     "absender": "Telekom"},
+        {"dokumenttyp": "Kontoauszug", "absender": "Sparkasse"},
+        {"dokumenttyp": "Brief",       "absender": "Unbekannt"},
+    ],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -20,38 +24,57 @@ _DEFAULT_PERSONEN = ["Kunze"]
 
 def _load_all() -> dict:
     if not os.path.exists(STAMMDATEN_PATH):
-        return {"kombinationen": [], "personen": []}
+        return {k: list(v) for k, v in _DEFAULTS.items()}
     with open(STAMMDATEN_PATH, "r", encoding="utf-8") as f:
         try:
             data = json.load(f)
         except json.JSONDecodeError:
-            return {"kombinationen": [], "personen": []}
+            return {k: list(v) for k, v in _DEFAULTS.items()}
 
-    # New format
-    if isinstance(data, dict):
+    # Current 4-section format
+    if isinstance(data, dict) and "dokumenttypen" in data:
         return {
-            "kombinationen": data.get("kombinationen", []),
-            "personen": data.get("personen", []),
+            "dokumenttypen":  data.get("dokumenttypen", []),
+            "absender":       data.get("absender", []),
+            "personen":       data.get("personen", []),
+            "kombinationen":  data.get("kombinationen", []),
         }
 
-    # Migrate old format (list of triplets)
+    # Migrate: old 2-section format {kombinationen, personen}
+    if isinstance(data, dict) and "kombinationen" in data:
+        kombi = data.get("kombinationen", [])
+        result = {
+            "dokumenttypen": sorted({e.get("dokumenttyp", "") for e in kombi if e.get("dokumenttyp")}),
+            "absender":      sorted({e.get("absender", "")    for e in kombi if e.get("absender")}),
+            "personen":      sorted(data.get("personen", [])),
+            "kombinationen": kombi,
+        }
+        _save_all(result)
+        return result
+
+    # Migrate: legacy triplet list [{dokumenttyp, absender, personenbezug}]
     if isinstance(data, list):
+        kombi, typen, abs_set, pers = [], set(), set(), set()
         seen: set[tuple] = set()
-        kombinationen = []
-        personen_set: set[str] = set()
         for e in data:
-            key = (e.get("dokumenttyp", ""), e.get("absender", ""))
-            if key not in seen:
-                seen.add(key)
-                kombinationen.append({"dokumenttyp": key[0], "absender": key[1]})
+            t, a = e.get("dokumenttyp", ""), e.get("absender", "")
+            typen.add(t); abs_set.add(a)
+            if (t, a) not in seen:
+                seen.add((t, a))
+                kombi.append({"dokumenttyp": t, "absender": a})
             pb = e.get("personenbezug", "")
             if pb:
-                personen_set.add(pb)
-        migrated = {"kombinationen": kombinationen, "personen": sorted(personen_set)}
-        _save_all(migrated)
-        return migrated
+                pers.add(pb)
+        result = {
+            "dokumenttypen": sorted(typen - {""}),
+            "absender":      sorted(abs_set - {""}),
+            "personen":      sorted(pers),
+            "kombinationen": kombi,
+        }
+        _save_all(result)
+        return result
 
-    return {"kombinationen": [], "personen": []}
+    return {k: list(v) for k, v in _DEFAULTS.items()}
 
 
 def _save_all(data: dict) -> None:
@@ -60,95 +83,119 @@ def _save_all(data: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Public API – Kombinationen
+# Dokumenttypen
 # ---------------------------------------------------------------------------
 
-def load() -> list[dict]:
-    return _load_all()["kombinationen"]
+def load_dokumenttypen() -> list[str]:
+    return _load_all()["dokumenttypen"]
 
+def save_dokumenttypen(items: list[str]) -> None:
+    d = _load_all(); d["dokumenttypen"] = items; _save_all(d)
 
-def save(kombinationen: list[dict]) -> None:
-    data = _load_all()
-    data["kombinationen"] = kombinationen
-    _save_all(data)
-
-
-def add_or_update(entry: dict) -> None:
-    """Upsert by (dokumenttyp, absender) key."""
-    data = _load_all()
-    key = (entry.get("dokumenttyp", ""), entry.get("absender", ""))
-    for i, e in enumerate(data["kombinationen"]):
-        if (e.get("dokumenttyp", ""), e.get("absender", "")) == key:
-            data["kombinationen"][i] = {"dokumenttyp": key[0], "absender": key[1]}
-            _save_all(data)
-            return
-    data["kombinationen"].append({"dokumenttyp": key[0], "absender": key[1]})
-    _save_all(data)
-
-
-def delete_kombination(index: int) -> None:
-    data = _load_all()
-    if 0 <= index < len(data["kombinationen"]):
-        data["kombinationen"].pop(index)
-        _save_all(data)
+def add_dokumenttyp(name: str) -> None:
+    if not name:
+        return
+    d = _load_all()
+    if name not in d["dokumenttypen"]:
+        d["dokumenttypen"] = sorted(d["dokumenttypen"] + [name])
+        _save_all(d)
 
 
 # ---------------------------------------------------------------------------
-# Public API – Personen
+# Absender
+# ---------------------------------------------------------------------------
+
+def load_absender() -> list[str]:
+    return _load_all()["absender"]
+
+def save_absender(items: list[str]) -> None:
+    d = _load_all(); d["absender"] = items; _save_all(d)
+
+def add_absender(name: str) -> None:
+    if not name:
+        return
+    d = _load_all()
+    if name not in d["absender"]:
+        d["absender"] = sorted(d["absender"] + [name])
+        _save_all(d)
+
+
+# ---------------------------------------------------------------------------
+# Personen
 # ---------------------------------------------------------------------------
 
 def load_persons() -> list[str]:
     return _load_all()["personen"]
 
-
-def save_persons(persons: list[str]) -> None:
-    data = _load_all()
-    data["personen"] = persons
-    _save_all(data)
-
+def save_persons(items: list[str]) -> None:
+    d = _load_all(); d["personen"] = items; _save_all(d)
 
 def add_person(name: str) -> None:
     if not name:
         return
-    data = _load_all()
-    if name not in data["personen"]:
-        data["personen"].append(name)
-        data["personen"].sort()
-        _save_all(data)
-
+    d = _load_all()
+    if name not in d["personen"]:
+        d["personen"] = sorted(d["personen"] + [name])
+        _save_all(d)
 
 def get_persons() -> list[str]:
     return sorted(load_persons())
 
 
 # ---------------------------------------------------------------------------
-# Public API – Query helpers
+# Kombinationen (KI-Kontext)
+# ---------------------------------------------------------------------------
+
+def load() -> list[dict]:
+    """Returns kombinationen — used as TF-IDF corpus and LLM RAG context."""
+    return _load_all()["kombinationen"]
+
+def save(kombinationen: list[dict]) -> None:
+    d = _load_all(); d["kombinationen"] = kombinationen; _save_all(d)
+
+def add_kombination(typ: str, absender: str) -> None:
+    if not typ or not absender:
+        return
+    d = _load_all()
+    for e in d["kombinationen"]:
+        if e.get("dokumenttyp") == typ and e.get("absender") == absender:
+            return
+    d["kombinationen"].append({"dokumenttyp": typ, "absender": absender})
+    _save_all(d)
+
+
+# ---------------------------------------------------------------------------
+# Query helpers
 # ---------------------------------------------------------------------------
 
 def get_unique_values(field: str) -> list[str]:
+    if field == "dokumenttyp":
+        return sorted(load_dokumenttypen())
+    if field == "absender":
+        return sorted(load_absender())
     if field == "personenbezug":
         return get_persons()
-    seen: set[str] = set()
-    result: list[str] = []
-    for e in load():
-        v = e.get(field, "")
-        if v and v not in seen:
-            seen.add(v)
-            result.append(v)
-    return sorted(result)
+    return []
 
 
 def get_rag_context() -> str:
-    data = _load_all()
+    d = _load_all()
     lines: list[str] = []
-    if data["kombinationen"]:
-        lines.append("Bekannte Dokumenttyp/Absender-Kombinationen:")
-        for e in data["kombinationen"]:
-            lines.append(f"  - {e.get('dokumenttyp', '')} | {e.get('absender', '')}")
-    if data["personen"]:
-        lines.append("Bekannte Personen (Nachname):")
-        for p in data["personen"]:
-            lines.append(f"  - {p}")
+
+    if d["dokumenttypen"]:
+        lines.append("Bekannte Dokumenttypen: " + ", ".join(d["dokumenttypen"]))
+
+    if d["absender"]:
+        lines.append("Bekannte Absender: " + ", ".join(d["absender"]))
+
+    if d["personen"]:
+        lines.append("Bekannte Personen: " + ", ".join(d["personen"]))
+
+    if d["kombinationen"]:
+        lines.append("Historische Kombinationen (Dokumenttyp → Absender):")
+        for e in d["kombinationen"]:
+            lines.append(f"  - {e.get('dokumenttyp', '')} → {e.get('absender', '')}")
+
     return "\n".join(lines)
 
 
@@ -158,4 +205,4 @@ def get_rag_context() -> str:
 
 def ensure_defaults() -> None:
     if not os.path.exists(STAMMDATEN_PATH):
-        _save_all({"kombinationen": _DEFAULT_KOMBINATIONEN, "personen": _DEFAULT_PERSONEN})
+        _save_all({k: list(v) for k, v in _DEFAULTS.items()})

@@ -53,10 +53,12 @@ class ConfirmWorker(QThread):
 
     def run(self):
         try:
-            # a) Real-Time Learning (decoupled)
-            database.add_or_update({"dokumenttyp": self.typ, "absender": self.ab})
+            # a) Real-Time Learning — all lists independent
+            database.add_dokumenttyp(self.typ)
+            database.add_absender(self.ab)
             if self.per:
                 database.add_person(self.per)
+            database.add_kombination(self.typ, self.ab)
 
             # b) XMP metadata
             _write_xmp(self.pdf_path, self.typ, self.ab, self.dat, self.per)
@@ -224,9 +226,9 @@ class MainTab(QWidget):
         self.lbl_preview.setText("—")
 
     def _populate_combos(self):
-        self.cb_typ.addItems([""] + database.get_unique_values("dokumenttyp"))
-        self.cb_absender.addItems([""] + database.get_unique_values("absender"))
-        self.cb_person.addItems([""] + database.get_unique_values("personenbezug"))
+        self.cb_typ.addItems([""] + database.load_dokumenttypen())
+        self.cb_absender.addItems([""] + database.load_absender())
+        self.cb_person.addItems([""] + database.get_persons())
 
     def _on_analysis_done(self, result: dict):
         self.progress.setVisible(False)
@@ -325,6 +327,29 @@ class MainTab(QWidget):
 # Settings tab
 # ---------------------------------------------------------------------------
 
+def _make_single_table(header: str) -> QTableWidget:
+    t = QTableWidget(0, 1)
+    t.setHorizontalHeaderLabels([header])
+    t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+    t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+    return t
+
+
+def _table_values(table: QTableWidget, col: int = 0) -> list[str]:
+    result = []
+    for row in range(table.rowCount()):
+        v = (table.item(row, col) or QTableWidgetItem("")).text().strip()
+        if v:
+            result.append(v)
+    return result
+
+
+def _fill_single(table: QTableWidget, items: list[str]) -> None:
+    table.setRowCount(len(items))
+    for row, v in enumerate(items):
+        table.setItem(row, 0, QTableWidgetItem(v))
+
+
 class SettingsTab(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -332,11 +357,30 @@ class SettingsTab(QWidget):
         self.refresh()
 
     def _build_ui(self):
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
 
-        # --- Kombinationen (Dokumenttyp + Absender) ---
-        grp_kombi = QGroupBox("Dokumenttyp / Absender")
-        vk = QVBoxLayout(grp_kombi)
+        # ── Top row: Dokumenttypen | Absender | Personen ──────────────────
+        top = QHBoxLayout()
+
+        self.tbl_typen = _make_single_table("Dokumenttyp")
+        grp_t = self._grp("Dokumenttypen", self.tbl_typen,
+                          self._add_typ, self._del_typ, self._save_typen)
+        top.addWidget(grp_t)
+
+        self.tbl_abs = _make_single_table("Absender")
+        grp_a = self._grp("Absender", self.tbl_abs,
+                          self._add_abs, self._del_abs, self._save_abs)
+        top.addWidget(grp_a)
+
+        self.tbl_pers = _make_single_table("Nachname")
+        grp_p = self._grp("Personen", self.tbl_pers,
+                          self._add_pers, self._del_pers, self._save_pers)
+        top.addWidget(grp_p)
+        root.addLayout(top)
+
+        # ── Bottom: KI-Kontext (Kombinationen) ────────────────────────────
+        grp_k = QGroupBox("KI-Kontext – historische Kombinationen")
+        vk = QVBoxLayout(grp_k)
 
         self.tbl_kombi = QTableWidget(0, 2)
         self.tbl_kombi.setHorizontalHeaderLabels(["Dokumenttyp", "Absender"])
@@ -355,84 +399,82 @@ class SettingsTab(QWidget):
         bar_k.addWidget(btn_k_del)
         bar_k.addWidget(btn_k_save)
         vk.addLayout(bar_k)
-        layout.addWidget(grp_kombi)
+        root.addWidget(grp_k)
 
-        # --- Personen ---
-        grp_pers = QGroupBox("Personen (Personenbezug)")
-        vp = QVBoxLayout(grp_pers)
-
-        self.tbl_pers = QTableWidget(0, 1)
-        self.tbl_pers.setHorizontalHeaderLabels(["Nachname"])
-        self.tbl_pers.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.tbl_pers.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        vp.addWidget(self.tbl_pers)
-
-        bar_p = QHBoxLayout()
-        btn_p_add = QPushButton("Hinzufügen")
-        btn_p_del = QPushButton("Löschen")
-        btn_p_save = QPushButton("Speichern")
-        btn_p_add.clicked.connect(self._add_person)
-        btn_p_del.clicked.connect(self._del_person)
-        btn_p_save.clicked.connect(self._save_persons)
-        bar_p.addWidget(btn_p_add)
-        bar_p.addWidget(btn_p_del)
-        bar_p.addWidget(btn_p_save)
-        vp.addLayout(bar_p)
-        layout.addWidget(grp_pers)
+    @staticmethod
+    def _grp(title: str, table: QTableWidget, fn_add, fn_del, fn_save) -> QGroupBox:
+        grp = QGroupBox(title)
+        v = QVBoxLayout(grp)
+        v.addWidget(table)
+        bar = QHBoxLayout()
+        for label, fn in [("＋", fn_add), ("－", fn_del), ("✓ Speichern", fn_save)]:
+            b = QPushButton(label)
+            b.clicked.connect(fn)
+            bar.addWidget(b)
+        v.addLayout(bar)
+        return grp
 
     def refresh(self):
-        kombinationen = database.load()
-        self.tbl_kombi.setRowCount(len(kombinationen))
-        for row, e in enumerate(kombinationen):
+        _fill_single(self.tbl_typen, database.load_dokumenttypen())
+        _fill_single(self.tbl_abs,   database.load_absender())
+        _fill_single(self.tbl_pers,  database.get_persons())
+
+        kombi = database.load()
+        self.tbl_kombi.setRowCount(len(kombi))
+        for row, e in enumerate(kombi):
             self.tbl_kombi.setItem(row, 0, QTableWidgetItem(e.get("dokumenttyp", "")))
             self.tbl_kombi.setItem(row, 1, QTableWidgetItem(e.get("absender", "")))
 
-        persons = database.get_persons()
-        self.tbl_pers.setRowCount(len(persons))
-        for row, name in enumerate(persons):
-            self.tbl_pers.setItem(row, 0, QTableWidgetItem(name))
+    # Dokumenttypen
+    def _add_typ(self):
+        r = self.tbl_typen.rowCount(); self.tbl_typen.insertRow(r)
+        self.tbl_typen.setItem(r, 0, QTableWidgetItem(""))
+    def _del_typ(self):
+        for r in sorted({i.row() for i in self.tbl_typen.selectedIndexes()}, reverse=True):
+            self.tbl_typen.removeRow(r)
+    def _save_typen(self):
+        database.save_dokumenttypen(sorted(_table_values(self.tbl_typen)))
+        QMessageBox.information(self, "Gespeichert", "Dokumenttypen gespeichert.")
 
-    # Kombinationen helpers
+    # Absender
+    def _add_abs(self):
+        r = self.tbl_abs.rowCount(); self.tbl_abs.insertRow(r)
+        self.tbl_abs.setItem(r, 0, QTableWidgetItem(""))
+    def _del_abs(self):
+        for r in sorted({i.row() for i in self.tbl_abs.selectedIndexes()}, reverse=True):
+            self.tbl_abs.removeRow(r)
+    def _save_abs(self):
+        database.save_absender(sorted(_table_values(self.tbl_abs)))
+        QMessageBox.information(self, "Gespeichert", "Absender gespeichert.")
+
+    # Personen
+    def _add_pers(self):
+        r = self.tbl_pers.rowCount(); self.tbl_pers.insertRow(r)
+        self.tbl_pers.setItem(r, 0, QTableWidgetItem(""))
+    def _del_pers(self):
+        for r in sorted({i.row() for i in self.tbl_pers.selectedIndexes()}, reverse=True):
+            self.tbl_pers.removeRow(r)
+    def _save_pers(self):
+        database.save_persons(sorted(_table_values(self.tbl_pers)))
+        QMessageBox.information(self, "Gespeichert", "Personen gespeichert.")
+
+    # KI-Kombinationen
     def _add_kombi(self):
-        row = self.tbl_kombi.rowCount()
-        self.tbl_kombi.insertRow(row)
-        self.tbl_kombi.setItem(row, 0, QTableWidgetItem(""))
-        self.tbl_kombi.setItem(row, 1, QTableWidgetItem(""))
-
+        r = self.tbl_kombi.rowCount(); self.tbl_kombi.insertRow(r)
+        self.tbl_kombi.setItem(r, 0, QTableWidgetItem(""))
+        self.tbl_kombi.setItem(r, 1, QTableWidgetItem(""))
     def _del_kombi(self):
-        rows = sorted({i.row() for i in self.tbl_kombi.selectedIndexes()}, reverse=True)
-        for row in rows:
-            self.tbl_kombi.removeRow(row)
-
+        for r in sorted({i.row() for i in self.tbl_kombi.selectedIndexes()}, reverse=True):
+            self.tbl_kombi.removeRow(r)
     def _save_kombi(self):
         entries = []
-        for row in range(self.tbl_kombi.rowCount()):
+        for r in range(self.tbl_kombi.rowCount()):
             entries.append({
-                "dokumenttyp": (self.tbl_kombi.item(row, 0) or QTableWidgetItem("")).text().strip(),
-                "absender": (self.tbl_kombi.item(row, 1) or QTableWidgetItem("")).text().strip(),
+                "dokumenttyp": (self.tbl_kombi.item(r, 0) or QTableWidgetItem("")).text().strip(),
+                "absender":    (self.tbl_kombi.item(r, 1) or QTableWidgetItem("")).text().strip(),
             })
         database.save(entries)
-        QMessageBox.information(self, "Gespeichert", "Kombinationen gespeichert.")
-
-    # Personen helpers
-    def _add_person(self):
-        row = self.tbl_pers.rowCount()
-        self.tbl_pers.insertRow(row)
-        self.tbl_pers.setItem(row, 0, QTableWidgetItem(""))
-
-    def _del_person(self):
-        rows = sorted({i.row() for i in self.tbl_pers.selectedIndexes()}, reverse=True)
-        for row in rows:
-            self.tbl_pers.removeRow(row)
-
-    def _save_persons(self):
-        persons = []
-        for row in range(self.tbl_pers.rowCount()):
-            name = (self.tbl_pers.item(row, 0) or QTableWidgetItem("")).text().strip()
-            if name:
-                persons.append(name)
-        database.save_persons(sorted(persons))
-        QMessageBox.information(self, "Gespeichert", "Personen gespeichert.")
+        QMessageBox.information(self, "Gespeichert", "KI-Kontext gespeichert.")
 
 
 # ---------------------------------------------------------------------------
