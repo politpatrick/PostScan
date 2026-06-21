@@ -123,7 +123,7 @@ def _tfidf_classify(text: str) -> tuple[str, str, float]:
         return "", "", 0.0
 
     corpus = [
-        f"{e.get('dokumenttyp', '')} {e.get('absender', '')} {e.get('personenbezug', '')}".strip()
+        f"{e.get('dokumenttyp', '')} {e.get('absender', '')}".strip()
         for e in entries
     ]
     try:

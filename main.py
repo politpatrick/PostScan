@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import sys
 
@@ -81,6 +82,15 @@ class ConfirmWorker(QThread):
 # XMP helper (module-level, called from ConfirmWorker thread)
 # ---------------------------------------------------------------------------
 
+def _vdate_to_iso(vdate: str) -> str:
+    m = re.match(r"v(\d{2})\.(\d{2})\.(\d{2})$", vdate)
+    if m:
+        d, mo, y = m.group(1), m.group(2), int(m.group(3))
+        year = 2000 + y
+        return f"{year:04d}-{mo}-{d}"
+    return vdate
+
+
 def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
     tmp_path = pdf_path + ".tmp.pdf"
     try:
@@ -89,7 +99,7 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
                 meta["dc:description"] = f"{typ} von {ab}"
                 meta["dc:subject"] = [x for x in [typ, ab, per] if x]
                 if dat:
-                    meta["xmp:CreateDate"] = dat
+                    meta["xmp:CreateDate"] = _vdate_to_iso(dat)
             pdf.save(tmp_path)
         os.replace(tmp_path, pdf_path)
     except Exception:
