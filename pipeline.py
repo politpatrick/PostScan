@@ -381,13 +381,6 @@ def analyze(pdf_path: str) -> dict:
     vorschlag_typ = bool(final_typ) and final_typ.lower() not in known_typen
     vorschlag_ab  = bool(final_ab)  and final_ab.lower()  not in known_abs
 
-    if vorschlag_typ:
-        database.add_dokumenttyp(final_typ)
-    if vorschlag_ab:
-        database.add_absender(final_ab)
-    if final_typ and final_ab:
-        database.add_kombination(final_typ, final_ab)
-
     return {
         "dokumenttyp": final_typ,
         "absender": final_ab,
