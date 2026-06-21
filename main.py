@@ -913,9 +913,7 @@ class SettingsTab(QWidget):
     def _build_ui(self):
         root = QVBoxLayout(self)
 
-        # ── Top row: Dokumenttypen | Absender | Personen ──────────────────
-        top = QHBoxLayout()
-
+        # ── Dokumenttypen + Absender (vertikal) | Personen ───────────────
         self.tbl_typen = QTableWidget(0, 3)
         self.tbl_typen.setHorizontalHeaderLabels(["Name", "Abk.", "Synonyme (kommagetrennt)"])
         self.tbl_typen.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
@@ -924,7 +922,6 @@ class SettingsTab(QWidget):
         self.tbl_typen.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         grp_t = self._grp("Dokumenttypen", self.tbl_typen,
                           self._add_typ, self._del_typ, self._save_typen)
-        top.addWidget(grp_t)
 
         self.tbl_abs = QTableWidget(0, 3)
         self.tbl_abs.setHorizontalHeaderLabels(["Name", "Abk.", "Synonyme (kommagetrennt)"])
@@ -934,11 +931,18 @@ class SettingsTab(QWidget):
         self.tbl_abs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         grp_a = self._grp("Absender", self.tbl_abs,
                           self._add_abs, self._del_abs, self._save_abs)
-        top.addWidget(grp_a)
+
+        left_col = QVBoxLayout()
+        left_col.addWidget(grp_t)
+        left_col.addWidget(grp_a)
 
         self.tbl_pers = _make_single_table("Nachname")
         grp_p = self._grp("Personen", self.tbl_pers,
                           self._add_pers, self._del_pers, self._save_pers)
+        grp_p.setMaximumWidth(200)
+
+        top = QHBoxLayout()
+        top.addLayout(left_col)
         top.addWidget(grp_p)
         root.addLayout(top)
 
@@ -947,9 +951,9 @@ class SettingsTab(QWidget):
             "QPushButton { text-align: left; padding: 4px 8px; "
             "background: #f0f0f0; border: 1px solid #bbb; border-radius: 3px; }"
         )
-        self._btn_toggle_kombi = QPushButton("▼   KI-Kontext – historische Kombinationen")
+        self._btn_toggle_kombi = QPushButton("▶   KI-Kontext – historische Kombinationen")
         self._btn_toggle_kombi.setCheckable(True)
-        self._btn_toggle_kombi.setChecked(True)
+        self._btn_toggle_kombi.setChecked(False)
         self._btn_toggle_kombi.setStyleSheet(_TOGGLE_STYLE)
         self._btn_toggle_kombi.clicked.connect(self._toggle_kombi)
         root.addWidget(self._btn_toggle_kombi)
@@ -975,12 +979,13 @@ class SettingsTab(QWidget):
         bar_k.addWidget(btn_k_del)
         bar_k.addWidget(btn_k_save)
         vk.addLayout(bar_k)
+        self._kombi_content.setVisible(False)
         root.addWidget(self._kombi_content)
 
         # ── Vorschläge (einklappbar) ──────────────────────────────────
-        self._btn_toggle_vorschlaege = QPushButton("▼   KI-Vorschläge – neu erkannte Einträge")
+        self._btn_toggle_vorschlaege = QPushButton("▶   KI-Vorschläge – neu erkannte Einträge")
         self._btn_toggle_vorschlaege.setCheckable(True)
-        self._btn_toggle_vorschlaege.setChecked(True)
+        self._btn_toggle_vorschlaege.setChecked(False)
         self._btn_toggle_vorschlaege.setStyleSheet(_TOGGLE_STYLE)
         self._btn_toggle_vorschlaege.clicked.connect(self._toggle_vorschlaege)
         root.addWidget(self._btn_toggle_vorschlaege)
@@ -1005,6 +1010,7 @@ class SettingsTab(QWidget):
         bar_v.addWidget(btn_v_acc)
         bar_v.addWidget(btn_v_rej)
         vv.addLayout(bar_v)
+        self._vorschlaege_content.setVisible(False)
         root.addWidget(self._vorschlaege_content)
 
     @staticmethod
