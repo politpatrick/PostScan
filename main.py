@@ -214,7 +214,7 @@ class _SelectAllLineEdit(QLineEdit):
 # ---------------------------------------------------------------------------
 
 class AnalyzeWorker(QThread):
-    finished = pyqtSignal(dict)
+    result_ready = pyqtSignal(dict)
     error = pyqtSignal(str)
 
     def __init__(self, pdf_path: str):
@@ -223,13 +223,13 @@ class AnalyzeWorker(QThread):
 
     def run(self):
         try:
-            self.finished.emit(pipeline.analyze(self.pdf_path))
+            self.result_ready.emit(pipeline.analyze(self.pdf_path))
         except Exception as e:
             self.error.emit(str(e))
 
 
 class ConfirmWorker(QThread):
-    finished = pyqtSignal(str)   # new file path in archiv/
+    result_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
     def __init__(self, pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str = ""):
@@ -271,7 +271,7 @@ class ConfirmWorker(QThread):
             tags = [t for t in [self.typ, self.ab, self.per] if t]
             if tags:
                 _set_macos_tags(dest, tags)
-            self.finished.emit(dest)
+            self.result_ready.emit(dest)
         except Exception as e:
             self.error.emit(str(e))
 
@@ -303,7 +303,7 @@ class OllamaCheckWorker(QThread):
 
 class OllamaPullWorker(QThread):
     progress = pyqtSignal(str)
-    finished = pyqtSignal(bool)
+    done = pyqtSignal(bool)
 
     def run(self):
         try:
@@ -316,10 +316,10 @@ class OllamaPullWorker(QThread):
             for line in out.decode("utf-8", errors="replace").splitlines():
                 if line.strip():
                     self.progress.emit(line)
-            self.finished.emit(proc.returncode == 0)
+            self.done.emit(proc.returncode == 0)
         except Exception as e:
             self.progress.emit(f"Fehler: {e}")
-            self.finished.emit(False)
+            self.done.emit(False)
 
 
 class GoogleTestWorker(QThread):
@@ -611,8 +611,9 @@ class MainTab(QWidget):
 
         self.status_message.emit("Analysiere Dokument …")
         self._analyze_worker = AnalyzeWorker(path)
-        self._analyze_worker.finished.connect(self._on_analysis_done)
+        self._analyze_worker.result_ready.connect(self._on_analysis_done)
         self._analyze_worker.error.connect(self._on_analysis_error)
+        self._analyze_worker.finished.connect(self._analyze_worker.deleteLater)
         self._analyze_worker.start()
 
     def load_from_result(self, path: str, result: dict):
@@ -826,8 +827,9 @@ class MainTab(QWidget):
 
         self.status_message.emit("Schreibe Metadaten & archiviere …")
         self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per, zusatz)
-        self._confirm_worker.finished.connect(self._on_confirm_done)
+        self._confirm_worker.result_ready.connect(self._on_confirm_done)
         self._confirm_worker.error.connect(self._on_confirm_error)
+        self._confirm_worker.finished.connect(self._confirm_worker.deleteLater)
         self._confirm_worker.start()
 
     def _on_confirm_done(self, dest: str):
@@ -856,7 +858,7 @@ class MainTab(QWidget):
         for worker in (self._analyze_worker, self._confirm_worker):
             if worker and worker.isRunning():
                 try:
-                    worker.finished.disconnect()
+                    worker.result_ready.disconnect()
                     worker.error.disconnect()
                 except Exception:
                     pass
@@ -1351,7 +1353,7 @@ class KIStatusTab(QWidget):
         self._txt.append("Lade phi3:mini herunter (~2,2 GB) …")
         self._pull_worker = OllamaPullWorker()
         self._pull_worker.progress.connect(lambda line: self._txt.append(line))
-        self._pull_worker.finished.connect(self._on_pull_done)
+        self._pull_worker.done.connect(self._on_pull_done)
         self._pull_worker.start()
 
     def _on_pull_done(self, success: bool):
@@ -1400,7 +1402,7 @@ class KIStatusTab(QWidget):
 # Main window
 # ---------------------------------------------------------------------------
 
-_MAX_PRE_WORKERS = 2
+_MAX_PRE_WORKERS = 1
 
 
 class MainWindow(QMainWindow):
@@ -1574,7 +1576,7 @@ class MainWindow(QMainWindow):
         if path in self._pre_workers:
             w = self._pre_workers.pop(path)
             try:
-                w.finished.disconnect()
+                w.result_ready.disconnect()
                 w.error.disconnect()
             except Exception:
                 pass
@@ -1594,8 +1596,9 @@ class MainWindow(QMainWindow):
                 break
             if path not in self._pre_workers and path not in self._cache:
                 worker = AnalyzeWorker(path)
-                worker.finished.connect(lambda res, p=path: self._on_pre_done(p, res))
+                worker.result_ready.connect(lambda res, p=path: self._on_pre_done(p, res))
                 worker.error.connect(lambda _err, p=path: self._pre_workers.pop(p, None))
+                worker.finished.connect(worker.deleteLater)
                 self._pre_workers[path] = worker
                 worker.start()
         self._refresh_queue_list()
@@ -1610,7 +1613,7 @@ class MainWindow(QMainWindow):
     def _clear_queue(self):
         for w in self._pre_workers.values():
             try:
-                w.finished.disconnect()
+                w.result_ready.disconnect()
                 w.error.disconnect()
             except Exception:
                 pass
