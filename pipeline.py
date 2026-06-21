@@ -119,7 +119,7 @@ def run_ocr(pdf_path: str) -> str:
 
 def _tfidf_classify(text: str) -> tuple[str, str, float]:
     entries = database.load()
-    if len(entries) < 2:
+    if not entries:
         return "", "", 0.0
 
     corpus = [
@@ -196,6 +196,7 @@ def _llm_classify(text: str, rag_context: str) -> dict:
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
+                "keep_alive": 0,
                 "options": {"num_predict": 512, "temperature": 0.1},
             },
             timeout=90,
