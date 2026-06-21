@@ -1,10 +1,12 @@
 import os
+import plistlib
 import re
 import shutil
 import sys
 from datetime import date as _today_date
 
 import pikepdf
+import xattr
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem
 from PyQt6.QtWidgets import (
@@ -191,13 +193,14 @@ class ConfirmWorker(QThread):
     finished = pyqtSignal(str)   # new file path in archiv/
     error = pyqtSignal(str)
 
-    def __init__(self, pdf_path: str, typ: str, ab: str, dat: str, per: str):
+    def __init__(self, pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str = ""):
         super().__init__()
         self.pdf_path = pdf_path
         self.typ = typ
         self.ab = ab
         self.dat = dat
         self.per = per
+        self.zusatz = zusatz
 
     def run(self):
         try:
@@ -210,13 +213,13 @@ class ConfirmWorker(QThread):
 
             # b) XMP metadata (dat without v-prefix → add it back here)
             dat_v = f"v{self.dat}" if self.dat and not self.dat.startswith("v") else self.dat
-            _write_xmp(self.pdf_path, self.typ, self.ab, dat_v, self.per)
+            _write_xmp(self.pdf_path, self.typ, self.ab, dat_v, self.per, self.zusatz)
 
             # c) Move & rename (use abbreviation for typ/absender if set)
             os.makedirs(ARCHIV_DIR, exist_ok=True)
             typ_display = database.get_dokumenttyp_display(self.typ)
             ab_display  = database.get_absender_display(self.ab)
-            parts = [p for p in [typ_display, ab_display, dat_v, self.per] if p]
+            parts = [p for p in [typ_display, self.zusatz, ab_display, dat_v, self.per] if p]
             new_name = "_".join(parts) + ".pdf"
             base, ext = os.path.splitext(new_name)
             dest = os.path.join(ARCHIV_DIR, new_name)
@@ -225,6 +228,9 @@ class ConfirmWorker(QThread):
                 dest = os.path.join(ARCHIV_DIR, f"{base}_{counter}{ext}")
                 counter += 1
             shutil.move(self.pdf_path, dest)
+            tags = [t for t in [self.typ, self.ab, self.per] if t]
+            if tags:
+                _set_macos_tags(dest, tags)
             self.finished.emit(dest)
         except Exception as e:
             self.error.emit(str(e))
@@ -243,13 +249,13 @@ def _vdate_to_iso(vdate: str) -> str:
     return vdate
 
 
-def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
+def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str = "") -> None:
     tmp_path = pdf_path + ".tmp.pdf"
     try:
         with pikepdf.open(pdf_path) as pdf:
             with pdf.open_metadata() as meta:
                 for key in ["dc:title", "dc:creator", "dc:subject", "dc:date",
-                            "pdf:Keywords", "xmp:CreateDate"]:
+                            "dc:description", "pdf:Keywords", "xmp:CreateDate"]:
                     try:
                         del meta[key]
                     except KeyError:
@@ -258,6 +264,8 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
                 meta["dc:creator"] = [ab] if ab else []
                 if per:
                     meta["dc:subject"] = [per]
+                if zusatz:
+                    meta["dc:description"] = zusatz
                 meta["pdf:Keywords"] = ", ".join(x for x in [typ, ab, per] if x)
                 if dat:
                     iso = _vdate_to_iso(dat)
@@ -269,6 +277,11 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
         if os.path.exists(tmp_path):
             os.unlink(tmp_path)
         raise
+
+
+def _set_macos_tags(path: str, tags: list[str]) -> None:
+    plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
+    xattr.setxattr(path, "com.apple.metadata:_kMDItemUserTags", plist_bytes)
 
 
 # ---------------------------------------------------------------------------
@@ -338,6 +351,7 @@ class MainTab(QWidget):
         self.cb_absender = _combo()
         self.cb_datum = _combo()
         self.cb_person = _combo()
+        self.le_zusatz = _SelectAllLineEdit()
 
         self._typ_completer = _NameAbkCompleter(self.cb_typ)
         self.cb_typ.lineEdit().setCompleter(self._typ_completer)
@@ -347,6 +361,7 @@ class MainTab(QWidget):
 
         for row, (lbl, widget) in enumerate([
             ("Dokumenttyp:", self.cb_typ),
+            ("Zusatzinformationen:", self.le_zusatz),
             ("Absender:", self.cb_absender),
             ("Dokumentdatum:", self.cb_datum),
             ("Personenbezug:", self.cb_person),
@@ -368,6 +383,7 @@ class MainTab(QWidget):
 
         for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
             cb.currentTextChanged.connect(self._update_preview)
+        self.le_zusatz.textChanged.connect(self._update_preview)
 
         self.cb_datum.lineEdit().editingFinished.connect(self._auto_format_datum)
         self.cb_datum.lineEdit().returnPressed.connect(self._auto_format_datum)
@@ -424,6 +440,7 @@ class MainTab(QWidget):
     def _clear_fields(self):
         for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
             cb.clear()
+        self.le_zusatz.clear()
         self.lbl_preview.setText("—")
         self.txt_ocr.clear()
 
@@ -502,21 +519,23 @@ class MainTab(QWidget):
             self.cb_datum.setCurrentText(normalized)
 
     def _update_preview(self):
-        typ  = database.get_dokumenttyp_display(self.cb_typ.currentText().strip())
-        ab   = database.get_absender_display(self.cb_absender.currentText().strip())
-        dat  = self.cb_datum.currentText().strip()
-        dat  = f"v{dat}" if dat and not dat.startswith("v") else dat
-        per  = self.cb_person.currentText().strip()
-        parts = [p for p in [typ, ab, dat, per] if p]
+        typ    = database.get_dokumenttyp_display(self.cb_typ.currentText().strip())
+        zusatz = self.le_zusatz.text().strip()
+        ab     = database.get_absender_display(self.cb_absender.currentText().strip())
+        dat    = self.cb_datum.currentText().strip()
+        dat    = f"v{dat}" if dat and not dat.startswith("v") else dat
+        per    = self.cb_person.currentText().strip()
+        parts = [p for p in [typ, zusatz, ab, dat, per] if p]
         self.lbl_preview.setText("_".join(parts) + ".pdf" if parts else "—")
 
     def _confirm(self):
         if not self.pdf_path:
             return
-        typ = self.cb_typ.currentText().strip()
-        ab = self.cb_absender.currentText().strip()
-        dat = self.cb_datum.currentText().strip()
-        per = self.cb_person.currentText().strip()
+        typ    = self.cb_typ.currentText().strip()
+        zusatz = self.le_zusatz.text().strip()
+        ab     = self.cb_absender.currentText().strip()
+        dat    = self.cb_datum.currentText().strip()
+        per    = self.cb_person.currentText().strip()
 
         if not typ or not ab:
             QMessageBox.warning(self, "Fehlende Felder", "Bitte Dokumenttyp und Absender angeben.")
@@ -530,7 +549,7 @@ class MainTab(QWidget):
         self.progress.setVisible(True)
 
         self.status_message.emit("Schreibe Metadaten & archiviere …")
-        self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per)
+        self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per, zusatz)
         self._confirm_worker.finished.connect(self._on_confirm_done)
         self._confirm_worker.error.connect(self._on_confirm_error)
         self._confirm_worker.start()
