@@ -1,0 +1,5 @@
+PyQt6>=6.6.0
+scikit-learn>=1.4.0
+pikepdf>=9.0.0
+requests>=2.31.0
+ocrmypdf>=16.0.0
