@@ -5,14 +5,16 @@ import subprocess
 import tempfile
 
 import requests
+from rapidfuzz import fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
 import database
 
-OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "phi3:mini"
 TFIDF_THRESHOLD = 0.85
+FUZZY_THRESHOLD = 0.80
 DIGITAL_PDF_MIN_CHARS = 100
 
 MONTH_MAP = {
@@ -169,6 +171,41 @@ def _tfidf_classify(text: str) -> tuple[str, str, float, str, list[dict]]:
 
 
 
+def _fuzzy_classify(text: str) -> dict:
+    """Fuzzy-match known types and senders against OCR text using partial_ratio.
+    Robust against single-character OCR errors, transpositions and ligatures."""
+    text_lower = text.lower()
+
+    best_ab, best_ab_score, best_ab_match = "", 0.0, ""
+    for a in database.load_absender():
+        for variant in [a["name"]] + a.get("synonyme", []):
+            if len(variant) < 4:
+                continue
+            s = fuzz.partial_ratio(variant.lower(), text_lower) / 100
+            if s > best_ab_score:
+                best_ab_score, best_ab, best_ab_match = s, a["name"], variant
+
+    best_typ, best_typ_score, best_typ_match = "", 0.0, ""
+    for t in database.load_dokumenttypen():
+        for variant in [t["name"]] + t.get("synonyme", []):
+            if len(variant) < 4:
+                continue
+            s = fuzz.partial_ratio(variant.lower(), text_lower) / 100
+            if s > best_typ_score:
+                best_typ_score, best_typ, best_typ_match = s, t["name"], variant
+
+    combined = round(best_typ_score * 0.4 + best_ab_score * 0.6, 3)
+    return {
+        "typ":       best_typ,
+        "ab":        best_ab,
+        "typ_score": round(best_typ_score, 3),
+        "ab_score":  round(best_ab_score, 3),
+        "score":     combined,
+        "typ_match": best_typ_match,
+        "ab_match":  best_ab_match,
+    }
+
+
 def _parse_llm_json(raw: str) -> dict:
     # Try multiple extraction strategies for robustness
     raw = raw.strip()
@@ -203,7 +240,7 @@ def _parse_llm_json(raw: str) -> dict:
 
 
 def _build_llm_prompt(text: str, rag_context: str) -> str:
-    truncated = text[:3000]
+    truncated = text[:810]
     return (
         f"{rag_context}\n\n"
         "Analysiere den folgenden Dokumenttext und extrahiere genau diese vier Felder als JSON.\n"
@@ -226,18 +263,19 @@ def _llm_classify(text: str, rag_context: str) -> tuple[dict, str, str]:
             OLLAMA_URL,
             json={
                 "model": OLLAMA_MODEL,
-                "prompt": prompt,
+                "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "keep_alive": 0,
-                "options": {"num_predict": 512, "temperature": 0.1},
+                "options": {"num_predict": 256, "temperature": 0.1},
             },
             timeout=90,
         )
         resp.raise_for_status()
-        raw = resp.json().get("response", "")
+        raw = resp.json().get("message", {}).get("content", "")
         return _parse_llm_json(raw), raw, prompt
-    except Exception:
-        return {}, "", prompt
+    except Exception as e:
+        print(f"[LLM] Aufruf fehlgeschlagen: {e}", flush=True)
+        return {}, f"FEHLER: {e}", prompt
 
 
 def analyze(pdf_path: str) -> dict:
@@ -246,6 +284,7 @@ def analyze(pdf_path: str) -> dict:
     primary_date = dates[0] if dates else ""
 
     dokumenttyp, absender, score, tfidf_match, tfidf_top = _tfidf_classify(text)
+    fuzzy = _fuzzy_classify(text)
 
     fast_lane = score >= TFIDF_THRESHOLD and bool(primary_date)
 
@@ -260,6 +299,30 @@ def analyze(pdf_path: str) -> dict:
             "confidence": round(score, 3),
             "source": "tfidf",
             "fast_lane": True,
+            "fuzzy": fuzzy,
+            "tfidf_match": tfidf_match,
+            "tfidf_top": tfidf_top,
+            "rag_context": "",
+            "llm_prompt": "",
+            "llm_parsed": {},
+            "llm_raw": "",
+            "ocr_text": text,
+        }
+
+    fuzzy_lane = fuzzy["score"] >= FUZZY_THRESHOLD and bool(primary_date)
+
+    if fuzzy_lane:
+        persons = database.get_persons()
+        return {
+            "dokumenttyp": fuzzy["typ"],
+            "absender": fuzzy["ab"],
+            "dokumentdatum": primary_date,
+            "dokumentdatum_candidates": dates,
+            "personenbezug": persons[0] if len(persons) == 1 else "",
+            "confidence": fuzzy["score"],
+            "source": "fuzzy",
+            "fast_lane": True,
+            "fuzzy": fuzzy,
             "tfidf_match": tfidf_match,
             "tfidf_top": tfidf_top,
             "rag_context": "",
@@ -291,9 +354,11 @@ def analyze(pdf_path: str) -> dict:
     vorschlag_ab  = bool(final_ab)  and final_ab.lower()  not in known_abs
 
     if vorschlag_typ:
-        database.add_vorschlag_dokumenttyp(final_typ)
+        database.add_dokumenttyp(final_typ)
     if vorschlag_ab:
-        database.add_vorschlag_absender(final_ab)
+        database.add_absender(final_ab)
+    if final_typ and final_ab:
+        database.add_kombination(final_typ, final_ab)
 
     return {
         "dokumenttyp": final_typ,
@@ -306,6 +371,7 @@ def analyze(pdf_path: str) -> dict:
         "fast_lane": False,
         "vorschlag_typ": vorschlag_typ,
         "vorschlag_ab":  vorschlag_ab,
+        "fuzzy": fuzzy,
         "tfidf_match": tfidf_match,
         "tfidf_top": tfidf_top,
         "rag_context": rag,

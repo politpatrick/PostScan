@@ -2,8 +2,11 @@ import os
 import plistlib
 import re
 import shutil
+import subprocess
 import sys
 from datetime import date as _today_date
+
+import requests
 
 import pikepdf
 import xattr
@@ -243,6 +246,52 @@ class ConfirmWorker(QThread):
             self.finished.emit(dest)
         except Exception as e:
             self.error.emit(str(e))
+
+
+# ---------------------------------------------------------------------------
+# Ollama workers
+# ---------------------------------------------------------------------------
+
+class OllamaCheckWorker(QThread):
+    result = pyqtSignal(dict)
+
+    def run(self):
+        installed = shutil.which("ollama") is not None
+        running = False
+        model_ok = False
+        if installed:
+            try:
+                resp = requests.get("http://localhost:11434/api/tags", timeout=3)
+                if resp.ok:
+                    running = True
+                    models = resp.json().get("models", [])
+                    model_ok = any(
+                        "phi3:mini" in m.get("name", "") for m in models
+                    )
+            except Exception:
+                pass
+        self.result.emit({"installed": installed, "running": running, "model": model_ok})
+
+
+class OllamaPullWorker(QThread):
+    progress = pyqtSignal(str)
+    finished = pyqtSignal(bool)
+
+    def run(self):
+        try:
+            proc = subprocess.Popen(
+                ["ollama", "pull", "phi3:mini"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            out, _ = proc.communicate()
+            for line in out.decode("utf-8", errors="replace").splitlines():
+                if line.strip():
+                    self.progress.emit(line)
+            self.finished.emit(proc.returncode == 0)
+        except Exception as e:
+            self.progress.emit(f"Fehler: {e}")
+            self.finished.emit(False)
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +604,8 @@ class MainTab(QWidget):
         conf = result.get("confidence", 0.0)
         if source == "tfidf":
             src_text = f"Fast-Lane (TF-IDF) · Konfidenz: {conf:.0%}"
+        elif source == "fuzzy":
+            src_text = f"Fuzzy-Lane · Konfidenz: {conf:.0%}"
         else:
             src_text = f"LLM-Fallback (phi3:mini) · TF-IDF: {conf:.0%}"
         neu_parts = []
@@ -610,15 +661,30 @@ class MainTab(QWidget):
             debug_lines.append(
                 f"  {marker} #{i}  {t['score']:.1%}  {t['corpus']!r}  →  {t['typ']} / {t['ab']}"
             )
-        conf = result.get("confidence", 0)
-        fast = result.get("fast_lane", False)
-        threshold = 0.85
+        tfidf_conf = result.get("confidence", 0) if result.get("source") == "tfidf" else 0
         debug_lines += [
             "",
-            f"  Konfidenz: {conf:.1%}  |  Schwellwert: {threshold:.0%}  |  "
-            f"Fast-Lane: {'JA → LLM übersprungen' if fast else 'NEIN → LLM-Fallback'}",
+            f"  Konfidenz: {tfidf_conf:.1%}  |  Schwellwert: {pipeline.TFIDF_THRESHOLD:.0%}  |  "
+            f"TF-IDF-Lane: {'JA' if result.get('source') == 'tfidf' else 'NEIN'}",
             ""
         ]
+
+        # ── 3b. Fuzzy-Matching ───────────────────────────────────────
+        fuzzy = result.get("fuzzy", {})
+        debug_lines += [sep, "[ 3b ] FUZZY-MATCHING", sep]
+        if fuzzy:
+            fz_lane = result.get("source") == "fuzzy"
+            debug_lines += [
+                f"  Typ     : {fuzzy.get('typ', '')}  ({fuzzy.get('typ_score', 0):.0%})"
+                f"  via '{fuzzy.get('typ_match', '')}'",
+                f"  Absender: {fuzzy.get('ab', '')}  ({fuzzy.get('ab_score', 0):.0%})"
+                f"  via '{fuzzy.get('ab_match', '')}'",
+                f"  Gesamt  : {fuzzy.get('score', 0):.0%}  |  Schwellwert: {pipeline.FUZZY_THRESHOLD:.0%}  |  "
+                f"Fuzzy-Lane: {'JA → LLM übersprungen' if fz_lane else 'NEIN'}",
+                ""
+            ]
+        else:
+            debug_lines += ["  (keine)", ""]
 
         # ── 4. RAG-Kontext ────────────────────────────────────────────
         rag = result.get("rag_context", "")
@@ -721,6 +787,25 @@ class MainTab(QWidget):
         self.status_message.emit("Archivierung fehlgeschlagen")
         QMessageBox.critical(self, "Fehler", f"Archivierung fehlgeschlagen:\n{msg}")
 
+    def reset(self):
+        """Unload current document without archiving."""
+        for worker in (self._analyze_worker, self._confirm_worker):
+            if worker and worker.isRunning():
+                try:
+                    worker.finished.disconnect()
+                    worker.error.disconnect()
+                except Exception:
+                    pass
+        self._analyze_worker = None
+        self._confirm_worker = None
+        self.progress.setVisible(False)
+        self.btn_open.setEnabled(True)
+        self.btn_confirm.setEnabled(False)
+        self.pdf_path = ""
+        self.lbl_file.setText("Kein Dokument geladen")
+        self.lbl_source.setText("")
+        self._clear_fields()
+
 
 # ---------------------------------------------------------------------------
 # Settings tab
@@ -790,9 +875,21 @@ class SettingsTab(QWidget):
         top.addWidget(grp_p)
         root.addLayout(top)
 
-        # ── Bottom: KI-Kontext (Kombinationen) ────────────────────────────
-        grp_k = QGroupBox("KI-Kontext – historische Kombinationen")
-        vk = QVBoxLayout(grp_k)
+        # ── Bottom: KI-Kontext (Kombinationen, einklappbar) ───────────────
+        _TOGGLE_STYLE = (
+            "QPushButton { text-align: left; padding: 4px 8px; "
+            "background: #f0f0f0; border: 1px solid #bbb; border-radius: 3px; }"
+        )
+        self._btn_toggle_kombi = QPushButton("▼   KI-Kontext – historische Kombinationen")
+        self._btn_toggle_kombi.setCheckable(True)
+        self._btn_toggle_kombi.setChecked(True)
+        self._btn_toggle_kombi.setStyleSheet(_TOGGLE_STYLE)
+        self._btn_toggle_kombi.clicked.connect(self._toggle_kombi)
+        root.addWidget(self._btn_toggle_kombi)
+
+        self._kombi_content = QWidget()
+        vk = QVBoxLayout(self._kombi_content)
+        vk.setContentsMargins(0, 4, 0, 0)
 
         self.tbl_kombi = QTableWidget(0, 2)
         self.tbl_kombi.setHorizontalHeaderLabels(["Dokumenttyp", "Absender"])
@@ -811,11 +908,19 @@ class SettingsTab(QWidget):
         bar_k.addWidget(btn_k_del)
         bar_k.addWidget(btn_k_save)
         vk.addLayout(bar_k)
-        root.addWidget(grp_k)
+        root.addWidget(self._kombi_content)
 
-        # ── Vorschläge ───────────────────────────────────────────────
-        grp_v = QGroupBox("KI-Vorschläge – neu erkannte Einträge")
-        vv = QVBoxLayout(grp_v)
+        # ── Vorschläge (einklappbar) ──────────────────────────────────
+        self._btn_toggle_vorschlaege = QPushButton("▼   KI-Vorschläge – neu erkannte Einträge")
+        self._btn_toggle_vorschlaege.setCheckable(True)
+        self._btn_toggle_vorschlaege.setChecked(True)
+        self._btn_toggle_vorschlaege.setStyleSheet(_TOGGLE_STYLE)
+        self._btn_toggle_vorschlaege.clicked.connect(self._toggle_vorschlaege)
+        root.addWidget(self._btn_toggle_vorschlaege)
+
+        self._vorschlaege_content = QWidget()
+        vv = QVBoxLayout(self._vorschlaege_content)
+        vv.setContentsMargins(0, 4, 0, 0)
 
         vv.addWidget(QLabel("Dokumenttypen:"))
         self.tbl_vtyp = _make_single_table("Name")
@@ -833,7 +938,7 @@ class SettingsTab(QWidget):
         bar_v.addWidget(btn_v_acc)
         bar_v.addWidget(btn_v_rej)
         vv.addLayout(bar_v)
-        root.addWidget(grp_v)
+        root.addWidget(self._vorschlaege_content)
 
     @staticmethod
     def _grp(title: str, table: QTableWidget, fn_add, fn_del, fn_save) -> QGroupBox:
@@ -943,6 +1048,18 @@ class SettingsTab(QWidget):
             database.remove_vorschlag("absender", name)
         self.refresh()
 
+    def _toggle_kombi(self):
+        visible = self._btn_toggle_kombi.isChecked()
+        self._kombi_content.setVisible(visible)
+        arrow = "▼" if visible else "▶"
+        self._btn_toggle_kombi.setText(f"{arrow}   KI-Kontext – historische Kombinationen")
+
+    def _toggle_vorschlaege(self):
+        visible = self._btn_toggle_vorschlaege.isChecked()
+        self._vorschlaege_content.setVisible(visible)
+        arrow = "▼" if visible else "▶"
+        self._btn_toggle_vorschlaege.setText(f"{arrow}   KI-Vorschläge – neu erkannte Einträge")
+
     # KI-Kombinationen
     def _add_kombi(self):
         r = self.tbl_kombi.rowCount(); self.tbl_kombi.insertRow(r)
@@ -960,6 +1077,157 @@ class SettingsTab(QWidget):
             })
         database.save(entries)
         QMessageBox.information(self, "Gespeichert", "KI-Kontext gespeichert.")
+
+
+# ---------------------------------------------------------------------------
+# KI status tab
+# ---------------------------------------------------------------------------
+
+class KIStatusTab(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._check_worker: OllamaCheckWorker | None = None
+        self._pull_worker: OllamaPullWorker | None = None
+        self._status: dict = {}
+        self._build_ui()
+        QTimer.singleShot(800, self._check)
+
+    def _build_ui(self):
+        root = QVBoxLayout(self)
+        root.setSpacing(10)
+
+        grp = QGroupBox("Ollama – KI-Backend")
+        v = QVBoxLayout(grp)
+
+        grid = QGridLayout()
+        grid.setColumnStretch(1, 1)
+        self._lbl_installed = QLabel("—")
+        self._lbl_running = QLabel("—")
+        self._lbl_model = QLabel("—")
+        for row, (label, status_lbl) in enumerate([
+            ("Ollama installiert:", self._lbl_installed),
+            ("Ollama läuft:", self._lbl_running),
+            ("phi3:mini verfügbar:", self._lbl_model),
+        ]):
+            grid.addWidget(QLabel(label), row, 0)
+            grid.addWidget(status_lbl, row, 1)
+        v.addLayout(grid)
+
+        bar = QHBoxLayout()
+        self._btn_check = QPushButton("Prüfen")
+        self._btn_check.clicked.connect(self._check)
+        self._btn_fix = QPushButton("Einrichten")
+        self._btn_fix.clicked.connect(self._fix)
+        self._btn_fix.setEnabled(False)
+        bar.addWidget(self._btn_check)
+        bar.addWidget(self._btn_fix)
+        bar.addStretch()
+        v.addLayout(bar)
+        root.addWidget(grp)
+
+        self._progress = QProgressBar()
+        self._progress.setRange(0, 0)
+        self._progress.setVisible(False)
+        root.addWidget(self._progress)
+
+        self._txt = QTextEdit()
+        self._txt.setReadOnly(True)
+        self._txt.setMaximumHeight(160)
+        root.addWidget(self._txt)
+        root.addStretch()
+
+    def _set_status(self, label: QLabel, state):
+        if state is None:
+            label.setText("⋯  Prüfe …")
+            label.setStyleSheet("color: #888;")
+        elif state:
+            label.setText("✓  OK")
+            label.setStyleSheet("color: green; font-weight: bold;")
+        else:
+            label.setText("✗  Fehlt")
+            label.setStyleSheet("color: red; font-weight: bold;")
+
+    def _check(self):
+        self._btn_check.setEnabled(False)
+        self._btn_fix.setEnabled(False)
+        for lbl in (self._lbl_installed, self._lbl_running, self._lbl_model):
+            self._set_status(lbl, None)
+        self._check_worker = OllamaCheckWorker()
+        self._check_worker.result.connect(self._on_check_done)
+        self._check_worker.start()
+
+    def _on_check_done(self, status: dict):
+        self._status = status
+        self._set_status(self._lbl_installed, status["installed"])
+        self._set_status(self._lbl_running, status["running"])
+        self._set_status(self._lbl_model, status["model"])
+        self._btn_check.setEnabled(True)
+        all_ok = all(status.values())
+        self._btn_fix.setEnabled(not all_ok)
+        if all_ok:
+            self._txt.setPlainText("Alles bereit. phi3:mini ist verfügbar und wird für die Klassifikation genutzt.")
+        else:
+            issues = []
+            if not status["installed"]:
+                issues.append("Ollama ist nicht installiert.")
+                issues.append("→ Klicken Sie auf 'Einrichten' für Installationshinweise.")
+            elif not status["running"]:
+                issues.append("Ollama ist installiert, aber nicht gestartet.")
+                issues.append("→ Klicken Sie auf 'Einrichten' um den Server zu starten.")
+            if status.get("installed") and status.get("running") and not status["model"]:
+                issues.append("phi3:mini ist nicht heruntergeladen (~2,2 GB).")
+                issues.append("→ Klicken Sie auf 'Einrichten' um das Modell zu laden.")
+            self._txt.setPlainText("\n".join(issues))
+
+    def _fix(self):
+        if not self._status.get("installed"):
+            QMessageBox.information(
+                self, "Ollama installieren",
+                "Ollama ist nicht installiert.\n\n"
+                "Installation über Homebrew (Terminal):\n"
+                "    brew install ollama\n\n"
+                "Oder Download von: https://ollama.ai",
+            )
+            return
+
+        if not self._status.get("running"):
+            self._txt.clear()
+            self._txt.append("Starte Ollama-Server …")
+            try:
+                subprocess.Popen(
+                    ["ollama", "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._txt.append("Warte auf Serverstart …")
+            except Exception as e:
+                self._txt.append(f"Fehler: {e}")
+            QTimer.singleShot(2500, self._check)
+            return
+
+        if not self._status.get("model"):
+            self._pull_model()
+
+    def _pull_model(self):
+        self._btn_fix.setEnabled(False)
+        self._btn_check.setEnabled(False)
+        self._progress.setVisible(True)
+        self._txt.clear()
+        self._txt.append("Lade phi3:mini herunter (~2,2 GB) …")
+        self._pull_worker = OllamaPullWorker()
+        self._pull_worker.progress.connect(lambda line: self._txt.append(line))
+        self._pull_worker.finished.connect(self._on_pull_done)
+        self._pull_worker.start()
+
+    def _on_pull_done(self, success: bool):
+        self._progress.setVisible(False)
+        self._btn_check.setEnabled(True)
+        if success:
+            self._txt.append("\nphi3:mini erfolgreich installiert!")
+            self._check()
+        else:
+            self._txt.append("\nDownload fehlgeschlagen – bitte erneut versuchen.")
+            self._btn_fix.setEnabled(True)
 
 
 # ---------------------------------------------------------------------------
@@ -985,15 +1253,37 @@ class MainWindow(QMainWindow):
         self._tabs.setMinimumWidth(280)
         self.main_tab = MainTab()
         self.settings_tab = SettingsTab()
+        self.ki_tab = KIStatusTab()
         self.main_tab.settings_refresh_requested.connect(self.settings_tab.refresh)
         self._tabs.addTab(self.main_tab, "Dokument")
         self._tabs.addTab(self.settings_tab, "Stammdaten")
+        self._tabs.addTab(self.ki_tab, "KI-Einrichtung")
+
+        # Toggle buttons as corner widgets on the tab bar
+        self._queue_last_size = 180
+        self._pdf_last_size = 600
+
+        self._btn_toggle_queue = QPushButton("☰")
+        self._btn_toggle_queue.setCheckable(True)
+        self._btn_toggle_queue.setChecked(True)
+        self._btn_toggle_queue.setFixedHeight(24)
+        self._btn_toggle_queue.setToolTip("Warteschlange ein-/ausblenden")
+        self._btn_toggle_queue.clicked.connect(self._toggle_queue)
+        self._tabs.setCornerWidget(self._btn_toggle_queue, Qt.Corner.TopLeftCorner)
+
+        self._btn_toggle_pdf = QPushButton("PDF")
+        self._btn_toggle_pdf.setCheckable(True)
+        self._btn_toggle_pdf.setChecked(True)
+        self._btn_toggle_pdf.setFixedHeight(24)
+        self._btn_toggle_pdf.setToolTip("PDF-Ansicht ein-/ausblenden")
+        self._btn_toggle_pdf.clicked.connect(self._toggle_pdf)
+        self._tabs.setCornerWidget(self._btn_toggle_pdf, Qt.Corner.TopRightCorner)
 
         # ── Left panel: drop zone + queue ──────────────────────────────
-        queue_panel = QWidget()
-        queue_panel.setMinimumWidth(160)
-        queue_panel.setMaximumWidth(220)
-        qp_layout = QVBoxLayout(queue_panel)
+        self._queue_panel = QWidget()
+        self._queue_panel.setMinimumWidth(160)
+        self._queue_panel.setMaximumWidth(220)
+        qp_layout = QVBoxLayout(self._queue_panel)
         qp_layout.setContentsMargins(4, 4, 4, 4)
         qp_layout.setSpacing(6)
 
@@ -1027,7 +1317,7 @@ class MainWindow(QMainWindow):
 
         # ── Three-panel horizontal splitter ─────────────────────────────
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
-        self._splitter.addWidget(queue_panel)
+        self._splitter.addWidget(self._queue_panel)
         self._splitter.addWidget(self._tabs)
         self._splitter.addWidget(self._pdf_view)
         self._splitter.setStretchFactor(0, 0)
@@ -1052,9 +1342,33 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, self._clamp_pdf_width)
 
     def _clamp_pdf_width(self):
+        if not self._pdf_view.isVisible():
+            return
         total = self._splitter.width()
         if total > 0:
             self._pdf_view.setMaximumWidth(int(total * 0.4))
+
+    def _toggle_queue(self):
+        if self._queue_panel.isVisible():
+            self._queue_last_size = self._splitter.sizes()[0]
+            self._queue_panel.setVisible(False)
+        else:
+            self._queue_panel.setVisible(True)
+            sizes = self._splitter.sizes()
+            sizes[0] = self._queue_last_size or 180
+            self._splitter.setSizes(sizes)
+
+    def _toggle_pdf(self):
+        if self._pdf_view.isVisible():
+            self._pdf_last_size = self._splitter.sizes()[2]
+            self._pdf_view.setVisible(False)
+        else:
+            self._pdf_view.setMaximumWidth(16777215)
+            self._pdf_view.setVisible(True)
+            sizes = self._splitter.sizes()
+            sizes[2] = self._pdf_last_size or 600
+            self._splitter.setSizes(sizes)
+            QTimer.singleShot(0, self._clamp_pdf_width)
 
     def _show_pdf(self, path: str):
         self._pdf_doc.close()
@@ -1131,6 +1445,9 @@ class MainWindow(QMainWindow):
         self._pre_workers.clear()
         self._cache.clear()
         self._queue.clear()
+        self.main_tab.reset()
+        self._pdf_doc.close()
+        self._status_bar.showMessage("Warteschlange geleert")
         self._refresh_queue_list()
 
     def _refresh_queue_list(self):
