@@ -5,6 +5,7 @@ import sys
 
 import pikepdf
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
+from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QTabWidget, QFileDialog,
@@ -523,6 +524,12 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("PostScan")
+
+    icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
+    if os.path.exists(icon_path):
+        icon = QIcon(icon_path)
+        app.setWindowIcon(icon)
+
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
