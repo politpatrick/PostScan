@@ -4,3 +4,4 @@ pikepdf>=9.0.0
 requests>=2.31.0
 ocrmypdf>=16.0.0
 xattr>=1.1.0
+PyQt6-WebEngine>=6.6.0

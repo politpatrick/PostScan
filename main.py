@@ -7,14 +7,15 @@ from datetime import date as _today_date
 
 import pikepdf
 import xattr
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
-from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel
+from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QTabWidget, QFileDialog,
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
     QMessageBox, QProgressBar, QFrame, QGridLayout, QStatusBar,
     QGroupBox, QTextEdit, QSplitter, QLineEdit, QCompleter,
+    QListWidget, QListWidgetItem,
 )
 
 import database
@@ -134,11 +135,17 @@ class _NameAbkCompleter(QCompleter):
     def set_items(self, items):
         self._src.clear()
         for a in items:
-            name    = a["name"]
-            abk     = a.get("abk", "").strip()
-            syns    = [s.strip() for s in a.get("synonyme", []) if s.strip()]
-            aliases = ([abk] if abk else []) + syns
-            display = f"{name} ({', '.join(aliases)})" if aliases else name
+            name = a["name"]
+            abk  = a.get("abk", "").strip()
+            syns = [s.strip() for s in a.get("synonyme", []) if s.strip()]
+            if abk and syns:
+                display = f"{name} ({abk}: {', '.join(syns)})"
+            elif abk:
+                display = f"{name} ({abk})"
+            elif syns:
+                display = f"{name} ({', '.join(syns)})"
+            else:
+                display = name
             item = QStandardItem(display)
             item.setData(name, Qt.ItemDataRole.UserRole)
             self._src.appendRow(item)
@@ -255,7 +262,7 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str
         with pikepdf.open(pdf_path) as pdf:
             with pdf.open_metadata() as meta:
                 for key in ["dc:title", "dc:creator", "dc:subject", "dc:date",
-                            "dc:description", "pdf:Keywords", "xmp:CreateDate"]:
+                            "dc:description", "dc:publisher", "pdf:Keywords", "xmp:CreateDate"]:
                     try:
                         del meta[key]
                     except KeyError:
@@ -264,6 +271,7 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str
                 meta["dc:creator"] = [ab] if ab else []
                 if per:
                     meta["dc:subject"] = [per]
+                    meta["dc:publisher"] = [per]
                 if zusatz:
                     meta["dc:description"] = zusatz
                 meta["pdf:Keywords"] = ", ".join(x for x in [typ, ab, per] if x)
@@ -285,12 +293,69 @@ def _set_macos_tags(path: str, tags: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Drop zone widget
+# ---------------------------------------------------------------------------
+
+class DropZone(QFrame):
+    files_dropped = pyqtSignal(list)
+
+    _STYLE_IDLE = (
+        "DropZone { border: 2px dashed #aaa; border-radius: 8px; "
+        "background: #f7f7f7; }"
+    )
+    _STYLE_HOVER = (
+        "DropZone { border: 2px dashed #007aff; border-radius: 8px; "
+        "background: #e8f0ff; }"
+    )
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setMinimumHeight(70)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.setStyleSheet(self._STYLE_IDLE)
+        lbl = QLabel("PDFs hier ablegen")
+        lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        font = lbl.font()
+        font.setPointSize(11)
+        lbl.setFont(font)
+        lay = QVBoxLayout(self)
+        lay.addWidget(lbl)
+
+    def _pdfs(self, event) -> list[str]:
+        return [
+            u.toLocalFile() for u in event.mimeData().urls()
+            if u.toLocalFile().lower().endswith(".pdf")
+        ]
+
+    def dragEnterEvent(self, event):
+        if self._pdfs(event):
+            self.setStyleSheet(self._STYLE_HOVER)
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self.setStyleSheet(self._STYLE_IDLE)
+
+    def dropEvent(self, event):
+        self.setStyleSheet(self._STYLE_IDLE)
+        pdfs = self._pdfs(event)
+        if pdfs:
+            self.files_dropped.emit(pdfs)
+            event.acceptProposedAction()
+
+
+# ---------------------------------------------------------------------------
 # Main document tab
 # ---------------------------------------------------------------------------
 
 class MainTab(QWidget):
     settings_refresh_requested = pyqtSignal()
     status_message = pyqtSignal(str)
+    confirmed = pyqtSignal()
+    pdf_opened = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -358,6 +423,15 @@ class MainTab(QWidget):
 
         self._absender_completer = _NameAbkCompleter(self.cb_absender)
         self.cb_absender.lineEdit().setCompleter(self._absender_completer)
+
+        self._person_completer = QCompleter(self.cb_person)
+        self._person_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        self._person_completer.setModelSorting(QCompleter.ModelSorting.CaseInsensitivelySortedModel)
+        self._person_completer.setCompletionMode(QCompleter.CompletionMode.PopupCompletion)
+        self._person_completer.activated.connect(
+            lambda text: self.cb_person.lineEdit().setText(text)
+        )
+        self.cb_person.lineEdit().setCompleter(self._person_completer)
 
         for row, (lbl, widget) in enumerate([
             ("Dokumenttyp:", self.cb_typ),
@@ -430,12 +504,23 @@ class MainTab(QWidget):
         self.btn_open.setEnabled(False)
         self._clear_fields()
         self.progress.setVisible(True)
+        self.pdf_opened.emit(path)
 
         self.status_message.emit("Analysiere Dokument …")
         self._analyze_worker = AnalyzeWorker(path)
         self._analyze_worker.finished.connect(self._on_analysis_done)
         self._analyze_worker.error.connect(self._on_analysis_error)
         self._analyze_worker.start()
+
+    def load_from_result(self, path: str, result: dict):
+        self.pdf_path = path
+        self.lbl_file.setText(os.path.basename(path))
+        self.lbl_source.setText("")
+        self.btn_open.setEnabled(True)
+        self.progress.setVisible(False)
+        self._clear_fields()
+        self.pdf_opened.emit(path)
+        self._on_analysis_done(result)
 
     def _clear_fields(self):
         for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
@@ -445,7 +530,9 @@ class MainTab(QWidget):
         self.txt_ocr.clear()
 
     def _populate_combos(self):
-        self.cb_person.addItems([""] + database.get_persons())
+        persons = database.get_persons()
+        self.cb_person.addItems([""] + persons)
+        self._person_completer.setModel(QStringListModel(persons))
 
         typen = database.load_dokumenttypen()
         self.cb_typ.addItems([""] + [t["name"] for t in typen])
@@ -565,6 +652,7 @@ class MainTab(QWidget):
         self.lbl_source.setText("")
         self._clear_fields()
         self.settings_refresh_requested.emit()
+        self.confirmed.emit()
 
     def _on_confirm_error(self, msg: str):
         self.progress.setVisible(False)
@@ -774,42 +862,178 @@ class SettingsTab(QWidget):
 # Main window
 # ---------------------------------------------------------------------------
 
+_MAX_PRE_WORKERS = 2
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PostScan")
-        self.resize(720, 520)
-        self.setAcceptDrops(True)
+        self.resize(1200, 620)
 
-        tabs = QTabWidget()
+        # Queue state
+        self._queue: list[str] = []
+        self._cache: dict[str, dict] = {}
+        self._pre_workers: dict[str, AnalyzeWorker] = {}
+
+        # Tabs (centre)
+        self._tabs = QTabWidget()
         self.main_tab = MainTab()
         self.settings_tab = SettingsTab()
-
         self.main_tab.settings_refresh_requested.connect(self.settings_tab.refresh)
+        self._tabs.addTab(self.main_tab, "Dokument")
+        self._tabs.addTab(self.settings_tab, "Stammdaten")
 
-        tabs.addTab(self.main_tab, "Dokument")
-        tabs.addTab(self.settings_tab, "Stammdaten")
-        self.setCentralWidget(tabs)
+        # ── Left panel: drop zone + queue ──────────────────────────────
+        queue_panel = QWidget()
+        queue_panel.setMinimumWidth(160)
+        queue_panel.setMaximumWidth(220)
+        qp_layout = QVBoxLayout(queue_panel)
+        qp_layout.setContentsMargins(4, 4, 4, 4)
+        qp_layout.setSpacing(6)
+
+        self._drop_zone = DropZone()
+        self._drop_zone.files_dropped.connect(self._enqueue)
+        qp_layout.addWidget(self._drop_zone)
+
+        self._lbl_queue = QLabel("Warteschlange")
+        font_q = self._lbl_queue.font()
+        font_q.setPointSize(10)
+        self._lbl_queue.setFont(font_q)
+        qp_layout.addWidget(self._lbl_queue)
+
+        self._lst_queue = QListWidget()
+        self._lst_queue.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self._lst_queue.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        qp_layout.addWidget(self._lst_queue, stretch=1)
+
+        self._btn_clear = QPushButton("Leeren")
+        self._btn_clear.clicked.connect(self._clear_queue)
+        qp_layout.addWidget(self._btn_clear)
+
+        # ── Right panel: PDF viewer ─────────────────────────────────────
+        from PyQt6.QtWebEngineWidgets import QWebEngineView
+        from PyQt6.QtCore import QUrl
+
+        self._pdf_view = QWebEngineView(self)
+        self._pdf_view.setMinimumWidth(300)
+
+        # ── Three-panel horizontal splitter ─────────────────────────────
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.addWidget(queue_panel)
+        splitter.addWidget(self._tabs)
+        splitter.addWidget(self._pdf_view)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
+        splitter.setStretchFactor(2, 2)
+        splitter.setSizes([180, 420, 600])
+        self.setCentralWidget(splitter)
 
         self._status_bar = QStatusBar()
-        self._status_bar.showMessage("PostScan bereit – PDF hier ablegen oder \"PDF öffnen\" klicken")
+        self._status_bar.showMessage("PostScan bereit – PDFs in der Warteschlange ablegen")
         self.setStatusBar(self._status_bar)
         self.main_tab.status_message.connect(self._status_bar.showMessage)
+        self.main_tab.confirmed.connect(self._on_confirmed)
+        self.main_tab.pdf_opened.connect(self._show_pdf)
 
-    def dragEnterEvent(self, event):
-        if event.mimeData().hasUrls():
-            urls = event.mimeData().urls()
-            if any(u.toLocalFile().lower().endswith(".pdf") for u in urls):
-                event.acceptProposedAction()
-                return
-        event.ignore()
+    def _show_pdf(self, path: str):
+        from PyQt6.QtCore import QUrl
+        if path:
+            self._pdf_view.load(QUrl.fromLocalFile(path))
+        else:
+            self._pdf_view.setHtml("")
 
-    def dropEvent(self, event):
-        for url in event.mimeData().urls():
-            path = url.toLocalFile()
-            if path.lower().endswith(".pdf"):
-                self.main_tab.load_pdf(path)
+    def _on_confirmed(self):
+        self._pdf_view.setHtml("")
+        self._load_next()
+
+    # ------------------------------------------------------------------
+    # Queue management
+    # ------------------------------------------------------------------
+
+    def _enqueue(self, paths: list[str]):
+        for path in paths:
+            if path not in self._queue and path != self.main_tab.pdf_path:
+                self._queue.append(path)
+        self._refresh_queue_list()
+        if not self.main_tab.pdf_path:
+            self._load_next()
+        else:
+            self._start_preprocessing()
+
+    def _load_next(self):
+        if not self._queue:
+            return
+        path = self._queue.pop(0)
+        # Detach pre-worker for this path (it will finish but result is ignored)
+        if path in self._pre_workers:
+            w = self._pre_workers.pop(path)
+            try:
+                w.finished.disconnect()
+                w.error.disconnect()
+            except Exception:
+                pass
+        self._refresh_queue_list()
+        if path in self._cache:
+            result = self._cache.pop(path)
+            self.main_tab.load_from_result(path, result)
+            self._status_bar.showMessage(
+                f"Geladen aus Cache: {os.path.basename(path)} – Felder prüfen und bestätigen"
+            )
+        else:
+            self.main_tab.load_pdf(path)
+        self._start_preprocessing()
+
+    def _start_preprocessing(self):
+        for path in self._queue:
+            if len(self._pre_workers) >= _MAX_PRE_WORKERS:
                 break
+            if path not in self._pre_workers and path not in self._cache:
+                worker = AnalyzeWorker(path)
+                worker.finished.connect(lambda res, p=path: self._on_pre_done(p, res))
+                worker.error.connect(lambda _err, p=path: self._pre_workers.pop(p, None))
+                self._pre_workers[path] = worker
+                worker.start()
+        self._refresh_queue_list()
+
+    def _on_pre_done(self, path: str, result: dict):
+        self._pre_workers.pop(path, None)
+        if path in self._queue:
+            self._cache[path] = result
+        self._start_preprocessing()
+        self._refresh_queue_list()
+
+    def _clear_queue(self):
+        for w in self._pre_workers.values():
+            try:
+                w.finished.disconnect()
+                w.error.disconnect()
+            except Exception:
+                pass
+        self._pre_workers.clear()
+        self._cache.clear()
+        self._queue.clear()
+        self._refresh_queue_list()
+
+    def _refresh_queue_list(self):
+        self._lst_queue.clear()
+        for path in self._queue:
+            name = os.path.basename(path)
+            if path in self._cache:
+                text = f"✓ {name}"
+                color = QColor("#2e7d32")
+            elif path in self._pre_workers:
+                text = f"⋯ {name}"
+                color = QColor("#888")
+            else:
+                text = f"  {name}"
+                color = QColor("#333")
+            item = QListWidgetItem(text)
+            item.setForeground(color)
+            item.setToolTip(path)
+            self._lst_queue.addItem(item)
+        count = len(self._queue)
+        self._lbl_queue.setText(f"Warteschlange ({count})" if count else "Warteschlange")
 
 
 def main():
