@@ -529,8 +529,17 @@ def main():
     if os.path.exists(icon_path):
         icon = QIcon(icon_path)
         app.setWindowIcon(icon)
+        # macOS: set dock icon via AppKit
+        try:
+            from AppKit import NSApplication, NSImage
+            ns_image = NSImage.alloc().initByReferencingFile_(icon_path)
+            NSApplication.sharedApplication().setApplicationIconImage_(ns_image)
+        except Exception:
+            pass
 
     window = MainWindow()
+    if os.path.exists(icon_path):
+        window.setWindowIcon(QIcon(icon_path))
     window.show()
     sys.exit(app.exec())
 
