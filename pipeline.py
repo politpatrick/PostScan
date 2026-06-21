@@ -13,7 +13,7 @@ import config as app_config
 import database
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "phi3:mini"
+OLLAMA_MODEL = "gemma2:9b"
 GOOGLE_MODEL = "gemini-2.5-flash-lite"
 TFIDF_THRESHOLD = 0.85
 FUZZY_THRESHOLD = 0.80

@@ -294,7 +294,7 @@ class OllamaCheckWorker(QThread):
                     running = True
                     models = resp.json().get("models", [])
                     model_ok = any(
-                        "phi3:mini" in m.get("name", "") for m in models
+                        "gemma2:9b" in m.get("name", "") for m in models
                     )
             except Exception:
                 pass
@@ -308,7 +308,7 @@ class OllamaPullWorker(QThread):
     def run(self):
         try:
             proc = subprocess.Popen(
-                ["ollama", "pull", "phi3:mini"],
+                ["ollama", "pull", "gemma2:9b"],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
@@ -662,7 +662,7 @@ class MainTab(QWidget):
         elif source == "fuzzy":
             src_text = f"Fuzzy-Lane · Konfidenz: {conf:.0%}"
         else:
-            src_text = f"LLM-Fallback (phi3:mini) · TF-IDF: {conf:.0%}"
+            src_text = f"LLM-Fallback (gemma2:9b) · TF-IDF: {conf:.0%}"
         neu_parts = []
         if result.get("vorschlag_typ"):
             neu_parts.append(f"Typ: {result.get('dokumenttyp', '')}")
@@ -1173,7 +1173,7 @@ class KIStatusTab(QWidget):
         # ── Provider selection ──────────────────────────────────────────────
         grp_sel = QGroupBox("KI-Anbieter")
         sel_layout = QHBoxLayout(grp_sel)
-        self._radio_ollama = QRadioButton("Ollama / phi3:mini  (lokal, offline)")
+        self._radio_ollama = QRadioButton("Ollama / gemma2:9b  (lokal, offline)")
         self._radio_google = QRadioButton("Google GenAI / gemini-2.5-flash-lite  (Cloud)")
         self._provider_group = QButtonGroup(self)
         self._provider_group.addButton(self._radio_ollama, 0)
@@ -1204,7 +1204,7 @@ class KIStatusTab(QWidget):
         for row, (label, status_lbl) in enumerate([
             ("Ollama installiert:", self._lbl_installed),
             ("Ollama läuft:", self._lbl_running),
-            ("phi3:mini verfügbar:", self._lbl_model),
+            ("gemma2:9b verfügbar:", self._lbl_model),
         ]):
             grid.addWidget(QLabel(label), row, 0)
             grid.addWidget(status_lbl, row, 1)
@@ -1275,7 +1275,7 @@ class KIStatusTab(QWidget):
         cfg = app_config.load()
         cfg["llm_provider"] = provider
         app_config.save(cfg)
-        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else "Ollama (phi3:mini)"
+        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else "Ollama (gemma2:9b)"
         self._txt.setPlainText(f"KI-Anbieter gespeichert: {name}")
 
     # ── Ollama ──────────────────────────────────────────────────────────────
@@ -1309,7 +1309,7 @@ class KIStatusTab(QWidget):
         all_ok = all(status.values())
         self._btn_fix.setEnabled(not all_ok)
         if all_ok:
-            self._txt.setPlainText("Alles bereit. phi3:mini ist verfügbar und kann für die Klassifikation genutzt werden.")
+            self._txt.setPlainText("Alles bereit. gemma2:9b ist verfügbar und kann für die Klassifikation genutzt werden.")
         else:
             issues = []
             if not status["installed"]:
@@ -1319,7 +1319,7 @@ class KIStatusTab(QWidget):
                 issues.append("Ollama ist installiert, aber nicht gestartet.")
                 issues.append("→ Klicken Sie auf 'Einrichten' um den Server zu starten.")
             if status.get("installed") and status.get("running") and not status["model"]:
-                issues.append("phi3:mini ist nicht heruntergeladen (~2,2 GB).")
+                issues.append("gemma2:9b ist nicht heruntergeladen (~5,4 GB).")
                 issues.append("→ Klicken Sie auf 'Einrichten' um das Modell zu laden.")
             self._txt.setPlainText("\n".join(issues))
 
@@ -1357,7 +1357,7 @@ class KIStatusTab(QWidget):
         self._btn_check.setEnabled(False)
         self._progress.setVisible(True)
         self._txt.clear()
-        self._txt.append("Lade phi3:mini herunter (~2,2 GB) …")
+        self._txt.append("Lade gemma2:9b herunter (~5,4 GB) …")
         self._pull_worker = OllamaPullWorker()
         self._pull_worker.progress.connect(lambda line: self._txt.append(line))
         self._pull_worker.done.connect(self._on_pull_done)
@@ -1367,7 +1367,7 @@ class KIStatusTab(QWidget):
         self._progress.setVisible(False)
         self._btn_check.setEnabled(True)
         if success:
-            self._txt.append("\nphi3:mini erfolgreich installiert!")
+            self._txt.append("\ngemma2:9b erfolgreich installiert!")
             self._check()
         else:
             self._txt.append("\nDownload fehlgeschlagen – bitte erneut versuchen.")
