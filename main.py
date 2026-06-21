@@ -72,7 +72,9 @@ def _normalize_date(text: str) -> str:
         today = _today_date.today()
         cur_m, cur_yy = today.month, today.year % 100
 
-        if len(digits) == 2:                  # DD → current month + year
+        if len(digits) == 1:                  # D → current month + year
+            d, m, y = int(digits), cur_m, cur_yy
+        elif len(digits) == 2:                # DD → current month + year
             d, m, y = int(digits), cur_m, cur_yy
         elif len(digits) == 3:                # DDM or DMM → current year
             d1, m1 = int(digits[0:2]), int(digits[2])
@@ -92,6 +94,14 @@ def _normalize_date(text: str) -> str:
                 d, m, y = d2, m2, y2
             elif 1 <= d3 <= 31 and 1 <= m3 <= 12:
                 d, m, y = d3, m3, cur_yy
+        elif len(digits) == 5:
+            # Priority: DMMYY (1+2+2) → DDMYY (2+1+2)
+            d1, m1, y1 = int(digits[0]),   int(digits[1:3]), int(digits[3:5])  # DMMYY
+            d2, m2, y2 = int(digits[0:2]), int(digits[2]),   int(digits[3:5])  # DDMYY
+            if 1 <= d1 <= 31 and 1 <= m1 <= 12:
+                d, m, y = d1, m1, y1
+            elif 1 <= d2 <= 31 and 1 <= m2 <= 12:
+                d, m, y = d2, m2, y2
         elif len(digits) == 6:
             d, m, y = int(digits[0:2]), int(digits[2:4]), int(digits[4:6])
         elif len(digits) == 8:
@@ -238,10 +248,21 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
     try:
         with pikepdf.open(pdf_path) as pdf:
             with pdf.open_metadata() as meta:
-                meta["dc:description"] = f"{typ} von {ab}"
-                meta["dc:subject"] = [x for x in [typ, ab, per] if x]
+                for key in ["dc:title", "dc:creator", "dc:subject", "dc:date",
+                            "pdf:Keywords", "xmp:CreateDate"]:
+                    try:
+                        del meta[key]
+                    except KeyError:
+                        pass
+                meta["dc:title"] = typ
+                meta["dc:creator"] = [ab] if ab else []
+                if per:
+                    meta["dc:subject"] = [per]
+                meta["pdf:Keywords"] = ", ".join(x for x in [typ, ab, per] if x)
                 if dat:
-                    meta["xmp:CreateDate"] = _vdate_to_iso(dat)
+                    iso = _vdate_to_iso(dat)
+                    meta["dc:date"] = [iso]
+                    meta["xmp:CreateDate"] = iso
             pdf.save(tmp_path)
         os.replace(tmp_path, pdf_path)
     except Exception:
