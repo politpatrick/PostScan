@@ -128,8 +128,9 @@ def _tfidf_classify(text: str) -> tuple[str, str, float]:
     ]
     try:
         vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4))
-        matrix = vec.fit_transform(corpus + [text])
-        sims = cosine_similarity(matrix[-1], matrix[:-1])[0]
+        corpus_matrix = vec.fit_transform(corpus)
+        query_matrix = vec.transform([text])
+        sims = cosine_similarity(query_matrix, corpus_matrix)[0]
         best_idx = int(sims.argmax())
         best_score = float(sims[best_idx])
         if best_score > 0:
