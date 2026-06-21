@@ -283,6 +283,10 @@ class ConfirmWorker(QThread):
 class OllamaCheckWorker(QThread):
     result = pyqtSignal(dict)
 
+    def __init__(self, model: str = ""):
+        super().__init__()
+        self.model = model or app_config.get_ollama_model()
+
     def run(self):
         installed = shutil.which("ollama") is not None
         running = False
@@ -294,7 +298,7 @@ class OllamaCheckWorker(QThread):
                     running = True
                     models = resp.json().get("models", [])
                     model_ok = any(
-                        "gemma2:9b" in m.get("name", "") for m in models
+                        self.model in m.get("name", "") for m in models
                     )
             except Exception:
                 pass
@@ -305,10 +309,14 @@ class OllamaPullWorker(QThread):
     progress = pyqtSignal(str)
     done = pyqtSignal(bool)
 
+    def __init__(self, model: str = ""):
+        super().__init__()
+        self.model = model or app_config.get_ollama_model()
+
     def run(self):
         try:
             proc = subprocess.Popen(
-                ["ollama", "pull", "gemma2:9b"],
+                ["ollama", "pull", self.model],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
             )
@@ -1196,18 +1204,34 @@ class KIStatusTab(QWidget):
         self._grp_ollama = QGroupBox("Ollama – Einrichtung")
         v = QVBoxLayout(self._grp_ollama)
 
+        model_row = QHBoxLayout()
+        model_row.addWidget(QLabel("Modell:"))
+        self._cb_ollama_model = QComboBox()
+        for m in app_config.OLLAMA_MODELS:
+            self._cb_ollama_model.addItem(m)
+        saved_model = app_config.get_ollama_model()
+        idx = self._cb_ollama_model.findText(saved_model)
+        self._cb_ollama_model.setCurrentIndex(idx if idx >= 0 else 0)
+        model_row.addWidget(self._cb_ollama_model)
+        btn_save_model = QPushButton("Speichern")
+        btn_save_model.clicked.connect(self._save_ollama_model)
+        model_row.addWidget(btn_save_model)
+        v.addLayout(model_row)
+
         grid = QGridLayout()
         grid.setColumnStretch(1, 1)
         self._lbl_installed = QLabel("—")
         self._lbl_running = QLabel("—")
         self._lbl_model = QLabel("—")
-        for row, (label, status_lbl) in enumerate([
-            ("Ollama installiert:", self._lbl_installed),
-            ("Ollama läuft:", self._lbl_running),
-            ("gemma2:9b verfügbar:", self._lbl_model),
+        self._lbl_model_name = QLabel("Ollama installiert:")
+        for row, (lbl_widget, status_lbl) in enumerate([
+            (QLabel("Ollama installiert:"), self._lbl_installed),
+            (QLabel("Ollama läuft:"), self._lbl_running),
+            (self._lbl_model_name, self._lbl_model),
         ]):
-            grid.addWidget(QLabel(label), row, 0)
+            grid.addWidget(lbl_widget, row, 0)
             grid.addWidget(status_lbl, row, 1)
+        self._update_model_label()
         v.addLayout(grid)
 
         bar = QHBoxLayout()
@@ -1275,8 +1299,21 @@ class KIStatusTab(QWidget):
         cfg = app_config.load()
         cfg["llm_provider"] = provider
         app_config.save(cfg)
-        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else "Ollama (gemma2:9b)"
+        model = app_config.get_ollama_model()
+        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else f"Ollama ({model})"
         self._txt.setPlainText(f"KI-Anbieter gespeichert: {name}")
+
+    def _save_ollama_model(self):
+        model = self._cb_ollama_model.currentText()
+        cfg = app_config.load()
+        cfg["ollama_model"] = model
+        app_config.save(cfg)
+        self._update_model_label()
+        self._txt.setPlainText(f"Ollama-Modell gespeichert: {model}")
+
+    def _update_model_label(self):
+        model = self._cb_ollama_model.currentText() if hasattr(self, '_cb_ollama_model') else app_config.get_ollama_model()
+        self._lbl_model_name.setText(f"{model} verfügbar:")
 
     # ── Ollama ──────────────────────────────────────────────────────────────
 
@@ -1296,8 +1333,11 @@ class KIStatusTab(QWidget):
         self._btn_fix.setEnabled(False)
         for lbl in (self._lbl_installed, self._lbl_running, self._lbl_model):
             self._set_status(lbl, None)
-        self._check_worker = OllamaCheckWorker()
+        model = self._cb_ollama_model.currentText()
+        self._update_model_label()
+        self._check_worker = OllamaCheckWorker(model)
         self._check_worker.result.connect(self._on_check_done)
+        self._check_worker.finished.connect(self._check_worker.deleteLater)
         self._check_worker.start()
 
     def _on_check_done(self, status: dict):
@@ -1309,7 +1349,8 @@ class KIStatusTab(QWidget):
         all_ok = all(status.values())
         self._btn_fix.setEnabled(not all_ok)
         if all_ok:
-            self._txt.setPlainText("Alles bereit. gemma2:9b ist verfügbar und kann für die Klassifikation genutzt werden.")
+            model = self._cb_ollama_model.currentText()
+            self._txt.setPlainText(f"Alles bereit. {model} ist verfügbar und kann für die Klassifikation genutzt werden.")
         else:
             issues = []
             if not status["installed"]:
@@ -1319,7 +1360,8 @@ class KIStatusTab(QWidget):
                 issues.append("Ollama ist installiert, aber nicht gestartet.")
                 issues.append("→ Klicken Sie auf 'Einrichten' um den Server zu starten.")
             if status.get("installed") and status.get("running") and not status["model"]:
-                issues.append("gemma2:9b ist nicht heruntergeladen (~5,4 GB).")
+                model = self._cb_ollama_model.currentText()
+                issues.append(f"{model} ist nicht heruntergeladen.")
                 issues.append("→ Klicken Sie auf 'Einrichten' um das Modell zu laden.")
             self._txt.setPlainText("\n".join(issues))
 
@@ -1353,12 +1395,13 @@ class KIStatusTab(QWidget):
             self._pull_model()
 
     def _pull_model(self):
+        model = self._cb_ollama_model.currentText()
         self._btn_fix.setEnabled(False)
         self._btn_check.setEnabled(False)
         self._progress.setVisible(True)
         self._txt.clear()
-        self._txt.append("Lade gemma2:9b herunter (~5,4 GB) …")
-        self._pull_worker = OllamaPullWorker()
+        self._txt.append(f"Lade {model} herunter …")
+        self._pull_worker = OllamaPullWorker(model)
         self._pull_worker.progress.connect(lambda line: self._txt.append(line))
         self._pull_worker.done.connect(self._on_pull_done)
         self._pull_worker.start()
@@ -1367,7 +1410,8 @@ class KIStatusTab(QWidget):
         self._progress.setVisible(False)
         self._btn_check.setEnabled(True)
         if success:
-            self._txt.append("\ngemma2:9b erfolgreich installiert!")
+            model = self._cb_ollama_model.currentText()
+            self._txt.append(f"\n{model} erfolgreich installiert!")
             self._check()
         else:
             self._txt.append("\nDownload fehlgeschlagen – bitte erneut versuchen.")

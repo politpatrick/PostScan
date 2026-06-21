@@ -2,7 +2,9 @@ import json
 import os
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-_DEFAULTS: dict = {"llm_provider": "ollama", "google_api_key": ""}
+OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b-mlx"]
+
+_DEFAULTS: dict = {"llm_provider": "ollama", "ollama_model": "gemma2:9b", "google_api_key": ""}
 
 
 def load() -> dict:
@@ -21,6 +23,10 @@ def save(data: dict) -> None:
 
 def get_provider() -> str:
     return load().get("llm_provider", "ollama")
+
+
+def get_ollama_model() -> str:
+    return load().get("ollama_model", "gemma2:9b")
 
 
 def get_google_api_key() -> str:

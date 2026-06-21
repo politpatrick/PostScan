@@ -13,7 +13,7 @@ import config as app_config
 import database
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "gemma2:9b"
+OLLAMA_MODEL = "gemma2:9b"  # default; overridden at runtime by config
 GOOGLE_MODEL = "gemini-2.5-flash-lite"
 TFIDF_THRESHOLD = 0.85
 FUZZY_THRESHOLD = 0.80
@@ -264,7 +264,7 @@ def _llm_classify(text: str, rag_context: str) -> tuple[dict, str, str]:
         resp = requests.post(
             OLLAMA_URL,
             json={
-                "model": OLLAMA_MODEL,
+                "model": app_config.get_ollama_model(),
                 "messages": [{"role": "user", "content": prompt}],
                 "stream": False,
                 "keep_alive": 0,
