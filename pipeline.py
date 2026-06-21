@@ -145,12 +145,6 @@ def _tfidf_classify(text: str) -> tuple[str, str, float]:
     return "", "", 0.0
 
 
-def _personenbezug_for(dokumenttyp: str, absender: str) -> str:
-    for e in database.load():
-        if e.get("dokumenttyp") == dokumenttyp and e.get("absender") == absender:
-            return e.get("personenbezug", "")
-    return ""
-
 
 def _parse_llm_json(raw: str) -> dict:
     # Try multiple extraction strategies for robustness
@@ -218,12 +212,13 @@ def analyze(pdf_path: str) -> dict:
 
     # Fast-Lane: skip LLM if confidence is high enough and date is clear
     if score >= TFIDF_THRESHOLD and primary_date:
+        persons = database.get_persons()
         return {
             "dokumenttyp": dokumenttyp,
             "absender": absender,
             "dokumentdatum": primary_date,
             "dokumentdatum_candidates": dates,
-            "personenbezug": _personenbezug_for(dokumenttyp, absender),
+            "personenbezug": persons[0] if len(persons) == 1 else "",
             "confidence": round(score, 3),
             "source": "tfidf",
         }
