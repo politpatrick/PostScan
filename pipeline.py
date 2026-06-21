@@ -286,16 +286,17 @@ def _llm_classify_google(text: str, rag_context: str) -> tuple[dict, str, str]:
         return {}, "FEHLER: Kein API-Schlüssel konfiguriert", ""
     prompt = _build_llm_prompt(text, rag_context)
     try:
-        import google.generativeai as genai
-        genai.configure(api_key=api_key)
-        model = genai.GenerativeModel(
-            GOOGLE_MODEL,
-            generation_config=genai.types.GenerationConfig(
+        from google import genai
+        from google.genai import types as genai_types
+        client = genai.Client(api_key=api_key)
+        response = client.models.generate_content(
+            model=GOOGLE_MODEL,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
                 max_output_tokens=256,
                 temperature=0.1,
             ),
         )
-        response = model.generate_content(prompt)
         raw = response.text
         return _parse_llm_json(raw), raw, prompt
     except Exception as e:

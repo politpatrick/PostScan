@@ -331,16 +331,17 @@ class GoogleTestWorker(QThread):
 
     def run(self):
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            model = genai.GenerativeModel(
-                "gemini-2.5-flash-lite",
-                generation_config=genai.types.GenerationConfig(max_output_tokens=10),
+            from google import genai
+            from google.genai import types as genai_types
+            client = genai.Client(api_key=self.api_key)
+            client.models.generate_content(
+                model="gemini-2.5-flash-lite",
+                contents="Antworte mit: OK",
+                config=genai_types.GenerateContentConfig(max_output_tokens=10),
             )
-            model.generate_content("Antworte mit: OK")
             self.result.emit(True, "Verbindung erfolgreich – API-Schlüssel ist gültig.")
         except ImportError:
-            self.result.emit(False, "Paket nicht installiert: pip install google-generativeai")
+            self.result.emit(False, "Paket nicht installiert: pip install google-genai")
         except Exception as e:
             self.result.emit(False, f"Fehler: {e}")
 
