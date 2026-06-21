@@ -117,15 +117,26 @@ def run_ocr(pdf_path: str) -> str:
     return existing_text
 
 
-def _tfidf_classify(text: str) -> tuple[str, str, float]:
+def _tfidf_classify(text: str) -> tuple[str, str, float, str]:
     entries = database.load()
     if not entries:
-        return "", "", 0.0
+        return "", "", 0.0, ""
 
-    corpus = [
-        f"{e.get('dokumenttyp', '')} {e.get('absender', '')}".strip()
-        for e in entries
-    ]
+    # Build expanded corpus: cartesian product of typ variants x absender variants
+    typ_syn = {t["name"]: t.get("synonyme", []) for t in database.load_dokumenttypen()}
+    abs_syn = {a["name"]: a.get("synonyme", []) for a in database.load_absender()}
+    corpus = []
+    corpus_keys = []
+    for e in entries:
+        typ = e.get("dokumenttyp", "")
+        ab  = e.get("absender", "")
+        typ_variants = [typ] + typ_syn.get(typ, [])
+        abs_variants = [ab]  + abs_syn.get(ab, [])
+        for tv in typ_variants:
+            for av in abs_variants:
+                corpus.append(f"{tv} {av}".strip())
+                corpus_keys.append((typ, ab))
+
     try:
         vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4))
         corpus_matrix = vec.fit_transform(corpus)
@@ -134,15 +145,11 @@ def _tfidf_classify(text: str) -> tuple[str, str, float]:
         best_idx = int(sims.argmax())
         best_score = float(sims[best_idx])
         if best_score > 0:
-            e = entries[best_idx]
-            return (
-                e.get("dokumenttyp", ""),
-                e.get("absender", ""),
-                best_score,
-            )
+            typ, ab = corpus_keys[best_idx]
+            return typ, ab, best_score, corpus[best_idx]
     except Exception:
         pass
-    return "", "", 0.0
+    return "", "", 0.0, ""
 
 
 
@@ -198,9 +205,9 @@ def _llm_classify(text: str, rag_context: str) -> dict:
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "")
-        return _parse_llm_json(raw)
+        return _parse_llm_json(raw), raw
     except Exception:
-        return {}
+        return {}, ""
 
 
 def analyze(pdf_path: str) -> dict:
@@ -208,7 +215,7 @@ def analyze(pdf_path: str) -> dict:
     dates = extract_dates(text)
     primary_date = dates[0] if dates else ""
 
-    dokumenttyp, absender, score = _tfidf_classify(text)
+    dokumenttyp, absender, score, tfidf_match = _tfidf_classify(text)
 
     # Fast-Lane: skip LLM if confidence is high enough and date is clear
     if score >= TFIDF_THRESHOLD and primary_date:
@@ -221,11 +228,14 @@ def analyze(pdf_path: str) -> dict:
             "personenbezug": persons[0] if len(persons) == 1 else "",
             "confidence": round(score, 3),
             "source": "tfidf",
+            "tfidf_match": tfidf_match,
+            "llm_raw": "",
+            "ocr_text": text,
         }
 
     # LLM Fallback with RAG context
     rag = database.get_rag_context()
-    llm = _llm_classify(text, rag)
+    llm, llm_raw = _llm_classify(text, rag)
 
     return {
         "dokumenttyp": llm.get("dokumenttyp") or dokumenttyp,
@@ -235,4 +245,7 @@ def analyze(pdf_path: str) -> dict:
         "personenbezug": llm.get("personenbezug", ""),
         "confidence": round(score, 3),
         "source": "llm",
+        "tfidf_match": tfidf_match,
+        "llm_raw": llm_raw,
+        "ocr_text": text,
     }
