@@ -4,7 +4,7 @@ import shutil
 import sys
 
 import pikepdf
-from PyQt6.QtCore import QThread, pyqtSignal, Qt
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QTabWidget, QFileDialog,
@@ -18,6 +18,16 @@ import pipeline
 
 EINGANG_DIR = os.path.join(os.path.dirname(__file__), "eingang")
 ARCHIV_DIR = os.path.join(os.path.dirname(__file__), "archiv")
+
+
+def _select_on_focus(combo: QComboBox) -> None:
+    """Select all text when the user clicks into an editable combobox."""
+    le = combo.lineEdit()
+    orig = le.focusInEvent
+    def _on_focus(event):
+        orig(event)
+        QTimer.singleShot(0, le.selectAll)
+    le.focusInEvent = _on_focus
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +176,9 @@ class MainTab(QWidget):
         self.cb_absender = _combo()
         self.cb_datum = _combo()
         self.cb_person = _combo()
+
+        for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
+            _select_on_focus(cb)
 
         for row, (lbl, widget) in enumerate([
             ("Dokumenttyp:", self.cb_typ),
