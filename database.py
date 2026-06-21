@@ -1,6 +1,5 @@
 import json
 import os
-from typing import Optional
 
 STAMMDATEN_PATH = os.path.join(os.path.dirname(__file__), "stammdaten.json")
 
@@ -55,18 +54,16 @@ def get_rag_context() -> str:
         return ""
     lines = ["Bekannte Kombinationen (Dokumenttyp | Absender | Personenbezug):"]
     for e in entries:
-        dt = e.get("dokumenttyp", "")
-        ab = e.get("absender", "")
-        pb = e.get("personenbezug", "")
-        lines.append(f"  - {dt} | {ab} | {pb}")
+        lines.append(
+            f"  - {e.get('dokumenttyp', '')} | {e.get('absender', '')} | {e.get('personenbezug', '')}"
+        )
     return "\n".join(lines)
 
 
 def get_unique_values(field: str) -> list[str]:
-    entries = load()
-    seen = set()
-    result = []
-    for e in entries:
+    seen: set[str] = set()
+    result: list[str] = []
+    for e in load():
         v = e.get(field, "")
         if v and v not in seen:
             seen.add(v)

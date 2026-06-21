@@ -1,9 +1,8 @@
+import json
 import os
 import re
-import json
 import subprocess
 import tempfile
-from typing import Optional
 
 import requests
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -14,13 +13,7 @@ import database
 OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "phi3:mini"
 TFIDF_THRESHOLD = 0.85
-
-DATE_PATTERNS = [
-    (r"\b(\d{2})\.(\d{2})\.(\d{4})\b", "de_long"),   # DD.MM.YYYY
-    (r"\b(\d{2})\.(\d{2})\.(\d{2})\b", "de_short"),   # DD.MM.YY
-    (r"\b(\d{4})-(\d{2})-(\d{2})\b", "iso"),           # YYYY-MM-DD
-    (r"\b(\d{1,2})\.\s*([A-Za-zä-ü]+)\s*(\d{4})\b", "de_text"),  # D. Monat YYYY
-]
+DIGITAL_PDF_MIN_CHARS = 100
 
 MONTH_MAP = {
     "januar": "01", "februar": "02", "märz": "03", "april": "04",
@@ -33,80 +26,46 @@ MONTH_MAP = {
 
 
 def _to_v_date(day: str, month: str, year: str) -> str:
-    y2 = year[-2:] if len(year) == 4 else year
-    return f"v{int(day):02d}.{int(month):02d}.{y2}"
+    d, m, y = int(day), int(month), year
+    if not (1 <= d <= 31 and 1 <= m <= 12):
+        return ""
+    y2 = y[-2:] if len(y) == 4 else y
+    return f"v{d:02d}.{m:02d}.{y2}"
 
 
 def extract_dates(text: str) -> list[str]:
-    dates = []
-    seen = set()
+    dates: list[str] = []
+    seen: set[str] = set()
 
-    for m in re.finditer(r"\b(\d{2})\.(\d{2})\.(\d{4})\b", text):
-        d, mo, y = m.group(1), m.group(2), m.group(3)
-        v = _to_v_date(d, mo, y)
-        if v not in seen:
+    def _add(v: str) -> None:
+        if v and v not in seen:
             seen.add(v)
             dates.append(v)
+
+    for m in re.finditer(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", text):
+        _add(_to_v_date(m.group(1), m.group(2), m.group(3)))
 
     for m in re.finditer(r"\b(\d{4})-(\d{2})-(\d{2})\b", text):
-        y, mo, d = m.group(1), m.group(2), m.group(3)
-        v = _to_v_date(d, mo, y)
-        if v not in seen:
-            seen.add(v)
-            dates.append(v)
+        _add(_to_v_date(m.group(3), m.group(2), m.group(1)))
 
-    for m in re.finditer(r"\b(\d{2})\.(\d{2})\.(\d{2})\b", text):
+    for m in re.finditer(r"\b(\d{1,2})\.(\d{1,2})\.(\d{2})\b", text):
         d, mo, y = m.group(1), m.group(2), m.group(3)
-        v = f"v{d}.{mo}.{y}"
-        if v not in seen:
-            seen.add(v)
-            dates.append(v)
+        if 1 <= int(d) <= 31 and 1 <= int(mo) <= 12:
+            v = f"v{int(d):02d}.{int(mo):02d}.{y}"
+            _add(v)
 
     for m in re.finditer(r"\b(\d{1,2})\.\s*([A-Za-zäöüÄÖÜ]+)\s*(\d{4})\b", text):
-        d, mo_name, y = m.group(1), m.group(2).lower(), m.group(3)
-        mo = MONTH_MAP.get(mo_name)
-        if mo:
-            v = _to_v_date(d, mo, y)
-            if v not in seen:
-                seen.add(v)
-                dates.append(v)
+        mo_str = MONTH_MAP.get(m.group(2).lower())
+        if mo_str:
+            _add(_to_v_date(m.group(1), mo_str, m.group(3)))
 
     return dates
 
 
-def run_ocr(pdf_path: str) -> str:
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp_path = tmp.name
+def _pdftotext(pdf_path: str, max_pages: int = 2) -> str:
     try:
         result = subprocess.run(
-            [
-                "ocrmypdf",
-                "--skip-text",
-                "--pages", "1-2",
-                "--output-type", "pdf",
-                "--sidecar", "-",
-                pdf_path,
-                tmp_path,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        text = result.stdout or ""
-        if not text.strip():
-            text = _extract_text_pdftotext(pdf_path)
-        return text
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        return _extract_text_pdftotext(pdf_path)
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
-def _extract_text_pdftotext(pdf_path: str) -> str:
-    try:
-        result = subprocess.run(
-            ["pdftotext", "-l", "2", pdf_path, "-"],
+            ["pdftotext", "-l", str(max_pages), pdf_path, "-"],
             capture_output=True, text=True, timeout=30,
         )
         return result.stdout or ""
@@ -114,12 +73,59 @@ def _extract_text_pdftotext(pdf_path: str) -> str:
         return ""
 
 
-def _tfidf_classify(text: str) -> tuple[Optional[str], Optional[str], float]:
+def run_ocr(pdf_path: str) -> str:
+    # Check if PDF already has embedded text (digital PDF shortcut)
+    existing_text = _pdftotext(pdf_path)
+    if len(existing_text.strip()) >= DIGITAL_PDF_MIN_CHARS:
+        return existing_text
+
+    # Scanned PDF: run ocrmypdf and write sidecar to temp file
+    sidecar_file = tempfile.NamedTemporaryFile(suffix=".txt", delete=False)
+    sidecar_path = sidecar_file.name
+    sidecar_file.close()
+    out_file = tempfile.NamedTemporaryFile(suffix=".pdf", delete=False)
+    out_path = out_file.name
+    out_file.close()
+
+    try:
+        subprocess.run(
+            [
+                "ocrmypdf",
+                "--skip-text",
+                "--pages", "1-2",
+                "--output-type", "pdf",
+                "--sidecar", sidecar_path,
+                pdf_path,
+                out_path,
+            ],
+            capture_output=True,
+            timeout=120,
+        )
+        with open(sidecar_path, "r", encoding="utf-8", errors="ignore") as f:
+            text = f.read()
+        if text.strip():
+            return text
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    finally:
+        for p in (sidecar_path, out_path):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    return existing_text
+
+
+def _tfidf_classify(text: str) -> tuple[str, str, float]:
     entries = database.load()
     if len(entries) < 2:
-        return None, None, 0.0
+        return "", "", 0.0
 
-    corpus = [f"{e.get('dokumenttyp','')} {e.get('absender','')}".strip() for e in entries]
+    corpus = [
+        f"{e.get('dokumenttyp', '')} {e.get('absender', '')} {e.get('personenbezug', '')}".strip()
+        for e in entries
+    ]
     try:
         vec = TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 4))
         matrix = vec.fit_transform(corpus + [text])
@@ -128,28 +134,60 @@ def _tfidf_classify(text: str) -> tuple[Optional[str], Optional[str], float]:
         best_score = float(sims[best_idx])
         if best_score > 0:
             e = entries[best_idx]
-            return e.get("dokumenttyp"), e.get("absender"), best_score
+            return (
+                e.get("dokumenttyp", ""),
+                e.get("absender", ""),
+                best_score,
+            )
     except Exception:
         pass
-    return None, None, 0.0
+    return "", "", 0.0
+
+
+def _personenbezug_for(dokumenttyp: str, absender: str) -> str:
+    for e in database.load():
+        if e.get("dokumenttyp") == dokumenttyp and e.get("absender") == absender:
+            return e.get("personenbezug", "")
+    return ""
+
+
+def _parse_llm_json(raw: str) -> dict:
+    # Try multiple extraction strategies for robustness
+    raw = raw.strip()
+
+    # Strategy 1: greedy match of outermost braces
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group())
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: locate first { … last }
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        try:
+            return json.loads(raw[start : end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    return {}
 
 
 def _llm_classify(text: str, rag_context: str) -> dict:
     truncated = text[:3000]
-    prompt = f"""{rag_context}
-
-Analysiere den folgenden Dokumenttext und extrahiere genau diese vier Felder als JSON:
-- "dokumenttyp": Typ des Dokuments (z.B. Rechnung, Bescheid, Vertrag, Brief, Kontoauszug)
-- "absender": Absender / Unternehmen / Behörde
-- "dokumentdatum": Datum im Format vDD.MM.YY (z.B. v21.06.26), oder "" wenn nicht erkennbar
-- "personenbezug": Name der Person (nur Nachname), oder "" wenn nicht erkennbar
-
-Antworte NUR mit einem JSON-Objekt, keine weiteren Erklärungen.
-
-Dokumenttext:
-{truncated}
-
-JSON:"""
+    prompt = (
+        f"{rag_context}\n\n"
+        "Analysiere den folgenden Dokumenttext und extrahiere genau diese vier Felder als JSON.\n"
+        "Regeln:\n"
+        '- "dokumenttyp": Typ des Dokuments (z.B. Rechnung, Bescheid, Vertrag, Brief, Kontoauszug)\n'
+        '- "absender": Absender / Unternehmen / Behörde\n'
+        '- "dokumentdatum": Datum im Format vDD.MM.YY (z.B. v21.06.26), sonst ""\n'
+        '- "personenbezug": Nur Nachname der Person, sonst ""\n'
+        "Antworte NUR mit einem JSON-Objekt. Kein Fließtext, keine Markdown-Codeblöcke.\n\n"
+        f"Dokumenttext:\n{truncated}\n\nJSON:"
+    )
 
     try:
         resp = requests.post(
@@ -158,18 +196,15 @@ JSON:"""
                 "model": OLLAMA_MODEL,
                 "prompt": prompt,
                 "stream": False,
-                "options": {"num_predict": 256, "temperature": 0.1},
+                "options": {"num_predict": 512, "temperature": 0.1},
             },
-            timeout=60,
+            timeout=90,
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "")
-        match = re.search(r"\{.*?\}", raw, re.DOTALL)
-        if match:
-            return json.loads(match.group())
+        return _parse_llm_json(raw)
     except Exception:
-        pass
-    return {}
+        return {}
 
 
 def analyze(pdf_path: str) -> dict:
@@ -179,37 +214,28 @@ def analyze(pdf_path: str) -> dict:
 
     dokumenttyp, absender, score = _tfidf_classify(text)
 
+    # Fast-Lane: skip LLM if confidence is high enough and date is clear
     if score >= TFIDF_THRESHOLD and primary_date:
-        personenbezug = ""
-        entries = database.load()
-        for e in entries:
-            if e.get("dokumenttyp") == dokumenttyp and e.get("absender") == absender:
-                personenbezug = e.get("personenbezug", "")
-                break
         return {
-            "dokumenttyp": dokumenttyp or "",
-            "absender": absender or "",
+            "dokumenttyp": dokumenttyp,
+            "absender": absender,
             "dokumentdatum": primary_date,
             "dokumentdatum_candidates": dates,
-            "personenbezug": personenbezug,
-            "confidence": score,
+            "personenbezug": _personenbezug_for(dokumenttyp, absender),
+            "confidence": round(score, 3),
             "source": "tfidf",
         }
 
+    # LLM Fallback with RAG context
     rag = database.get_rag_context()
-    llm_result = _llm_classify(text, rag)
-
-    dt = llm_result.get("dokumenttyp") or dokumenttyp or ""
-    ab = llm_result.get("absender") or absender or ""
-    dat = llm_result.get("dokumentdatum") or primary_date
-    pb = llm_result.get("personenbezug", "")
+    llm = _llm_classify(text, rag)
 
     return {
-        "dokumenttyp": dt,
-        "absender": ab,
-        "dokumentdatum": dat,
+        "dokumenttyp": llm.get("dokumenttyp") or dokumenttyp,
+        "absender": llm.get("absender") or absender,
+        "dokumentdatum": llm.get("dokumentdatum") or primary_date,
         "dokumentdatum_candidates": dates,
-        "personenbezug": pb,
-        "confidence": score,
+        "personenbezug": llm.get("personenbezug", ""),
+        "confidence": round(score, 3),
         "source": "llm",
     }
