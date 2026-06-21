@@ -65,10 +65,12 @@ class ConfirmWorker(QThread):
             os.makedirs(ARCHIV_DIR, exist_ok=True)
             parts = [p for p in [self.typ, self.ab, self.dat, self.per] if p]
             new_name = "_".join(parts) + ".pdf"
+            base, ext = os.path.splitext(new_name)
             dest = os.path.join(ARCHIV_DIR, new_name)
-            if os.path.exists(dest):
-                base, ext = os.path.splitext(new_name)
-                dest = os.path.join(ARCHIV_DIR, f"{base}_1{ext}")
+            counter = 1
+            while os.path.exists(dest):
+                dest = os.path.join(ARCHIV_DIR, f"{base}_{counter}{ext}")
+                counter += 1
             shutil.move(self.pdf_path, dest)
             self.finished.emit(dest)
         except Exception as e:
@@ -102,6 +104,7 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str) -> None:
 
 class MainTab(QWidget):
     settings_refresh_requested = pyqtSignal()
+    status_message = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -200,6 +203,7 @@ class MainTab(QWidget):
         self._clear_fields()
         self.progress.setVisible(True)
 
+        self.status_message.emit("Analysiere Dokument …")
         self._analyze_worker = AnalyzeWorker(path)
         self._analyze_worker.finished.connect(self._on_analysis_done)
         self._analyze_worker.error.connect(self._on_analysis_error)
@@ -250,10 +254,12 @@ class MainTab(QWidget):
 
         self.btn_confirm.setEnabled(True)
         self._update_preview()
+        self.status_message.emit("Analyse abgeschlossen – Felder prüfen und bestätigen")
 
     def _on_analysis_error(self, msg: str):
         self.progress.setVisible(False)
         self.btn_open.setEnabled(True)
+        self.status_message.emit("Analyse fehlgeschlagen")
         QMessageBox.critical(self, "Fehler", f"Analyse fehlgeschlagen:\n{msg}")
 
     def _update_preview(self):
@@ -280,6 +286,7 @@ class MainTab(QWidget):
         self.btn_open.setEnabled(False)
         self.progress.setVisible(True)
 
+        self.status_message.emit("Schreibe Metadaten & archiviere …")
         self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per)
         self._confirm_worker.finished.connect(self._on_confirm_done)
         self._confirm_worker.error.connect(self._on_confirm_error)
@@ -289,6 +296,7 @@ class MainTab(QWidget):
         self.progress.setVisible(False)
         self.btn_open.setEnabled(True)
         new_name = os.path.basename(dest)
+        self.status_message.emit(f"Archiviert: {new_name}")
         QMessageBox.information(self, "Archiviert", f"Gespeichert als:\n{new_name}")
         self.pdf_path = ""
         self.lbl_file.setText("Kein Dokument geladen")
@@ -300,6 +308,7 @@ class MainTab(QWidget):
         self.progress.setVisible(False)
         self.btn_open.setEnabled(True)
         self.btn_confirm.setEnabled(True)
+        self.status_message.emit("Archivierung fehlgeschlagen")
         QMessageBox.critical(self, "Fehler", f"Archivierung fehlgeschlagen:\n{msg}")
 
 
@@ -378,16 +387,16 @@ class MainWindow(QMainWindow):
         self.main_tab = MainTab()
         self.settings_tab = SettingsTab()
 
-        # Wire settings refresh signal via direct reference (no fragile findChild)
         self.main_tab.settings_refresh_requested.connect(self.settings_tab.refresh)
 
         tabs.addTab(self.main_tab, "Dokument")
         tabs.addTab(self.settings_tab, "Stammdaten")
         self.setCentralWidget(tabs)
 
-        status = QStatusBar()
-        status.showMessage("PostScan bereit")
-        self.setStatusBar(status)
+        self._status_bar = QStatusBar()
+        self._status_bar.showMessage("PostScan bereit")
+        self.setStatusBar(self._status_bar)
+        self.main_tab.status_message.connect(self._status_bar.showMessage)
 
 
 def main():
