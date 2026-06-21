@@ -103,12 +103,19 @@ def _normalize_date(text: str) -> str:
             elif 1 <= d3 <= 31 and 1 <= m3 <= 12:
                 d, m, y = d3, m3, cur_yy
         elif len(digits) == 5:
-            # Priority: DMMYY (1+2+2) → DDMYY (2+1+2)
             d1, m1, y1 = int(digits[0]),   int(digits[1:3]), int(digits[3:5])  # DMMYY
             d2, m2, y2 = int(digits[0:2]), int(digits[2]),   int(digits[3:5])  # DDMYY
-            if 1 <= d1 <= 31 and 1 <= m1 <= 12:
+            dmmyy_ok = 1 <= d1 <= 31 and 1 <= m1 <= 12
+            ddmyy_ok = 1 <= d2 <= 31 and 1 <= m2 <= 12
+            # DDMYY wins when unambiguous:
+            # - d2 > 12: first two digits can't be a month
+            # - digits[1]=='0': DMMYY would need a leading zero in month (e.g. "05"),
+            #   which the user never types without separators
+            if ddmyy_ok and (d2 > 12 or digits[1] == '0'):
+                d, m, y = d2, m2, y2
+            elif dmmyy_ok:
                 d, m, y = d1, m1, y1
-            elif 1 <= d2 <= 31 and 1 <= m2 <= 12:
+            elif ddmyy_ok:
                 d, m, y = d2, m2, y2
         elif len(digits) == 6:
             d, m, y = int(digits[0:2]), int(digits[2:4]), int(digits[4:6])
@@ -124,7 +131,26 @@ def _normalize_date(text: str) -> str:
             return f"{d:02d}.{m:02d}.{y:02d}"
 
     return text
-ARCHIV_DIR = os.path.join(os.path.dirname(__file__), "archiv")
+
+
+def _normalize_date_options(text: str) -> list[str]:
+    """Returns all valid interpretations of a date input, primary first.
+    For unambiguous input returns a 1-item list. For genuinely ambiguous
+    5-digit inputs (e.g. '11125' = 01.11.25 or 11.01.25) returns both."""
+    digits = re.sub(r'\D', '', text.strip().rstrip("."))
+    if len(digits) == 5:
+        d1, m1, y1 = int(digits[0]),   int(digits[1:3]), int(digits[3:5])
+        d2, m2, y2 = int(digits[0:2]), int(digits[2]),   int(digits[3:5])
+        dmmyy_ok = 1 <= d1 <= 31 and 1 <= m1 <= 12
+        ddmyy_ok = 1 <= d2 <= 31 and 1 <= m2 <= 12
+        if dmmyy_ok and ddmyy_ok and d2 <= 12 and digits[1] != '0':
+            opt_a = f"{d1:02d}.{m1:02d}.{y1:02d}"  # DMMYY
+            opt_b = f"{d2:02d}.{m2:02d}.{y2:02d}"  # DDMYY
+            if opt_a != opt_b:
+                return [opt_a, opt_b]
+    primary = _normalize_date(text)
+    return [primary] if primary else [text]
+
 
 
 class _NameAbkCompleter(QCompleter):
@@ -227,19 +253,20 @@ class ConfirmWorker(QThread):
             dat_v = f"v{self.dat}" if self.dat and not self.dat.startswith("v") else self.dat
             _write_xmp(self.pdf_path, self.typ, self.ab, dat_v, self.per, self.zusatz)
 
-            # c) Move & rename (use abbreviation for typ/absender if set)
-            os.makedirs(ARCHIV_DIR, exist_ok=True)
+            # c) Rename in-place (keep file at its original location)
             typ_display = database.get_dokumenttyp_display(self.typ)
             ab_display  = database.get_absender_display(self.ab)
             parts = [p.replace(" ", "_") for p in [typ_display, self.zusatz, ab_display, dat_v, self.per] if p]
             new_name = "_".join(parts) + ".pdf"
             base, ext = os.path.splitext(new_name)
-            dest = os.path.join(ARCHIV_DIR, new_name)
+            orig_dir = os.path.dirname(self.pdf_path)
+            dest = os.path.join(orig_dir, new_name)
             counter = 1
-            while os.path.exists(dest):
-                dest = os.path.join(ARCHIV_DIR, f"{base}_{counter}{ext}")
+            while os.path.exists(dest) and dest != self.pdf_path:
+                dest = os.path.join(orig_dir, f"{base}_{counter}{ext}")
                 counter += 1
-            shutil.move(self.pdf_path, dest)
+            if dest != self.pdf_path:
+                os.rename(self.pdf_path, dest)
             tags = [t for t in [self.typ, self.ab, self.per] if t]
             if tags:
                 _set_macos_tags(dest, tags)
@@ -405,7 +432,8 @@ class DropZone(QFrame):
 class MainTab(QWidget):
     settings_refresh_requested = pyqtSignal()
     status_message = pyqtSignal(str)
-    confirmed = pyqtSignal()
+    confirmed = pyqtSignal(str)   # emits original pdf_path before clearing
+    result_ready = pyqtSignal(str, dict)  # emits (pdf_path, result) after analysis
     pdf_opened = pyqtSignal(str)
 
     def __init__(self, parent=None):
@@ -596,6 +624,7 @@ class MainTab(QWidget):
         self.cb_absender.lineEdit().setCompleter(self._absender_completer)
 
     def _on_analysis_done(self, result: dict):
+        self.result_ready.emit(self.pdf_path, result)
         self.progress.setVisible(False)
         self.btn_open.setEnabled(True)
         self._populate_combos()
@@ -727,9 +756,19 @@ class MainTab(QWidget):
 
     def _auto_format_datum(self):
         raw = self.cb_datum.currentText()
-        normalized = _normalize_date(raw)
-        if normalized != raw:
-            self.cb_datum.setCurrentText(normalized)
+        options = _normalize_date_options(raw)
+        if len(options) > 1:
+            # Ambiguous input: show both interpretations in dropdown, keep existing OCR items below
+            existing = [self.cb_datum.itemText(i) for i in range(self.cb_datum.count())
+                        if self.cb_datum.itemText(i) not in options]
+            self.cb_datum.blockSignals(True)
+            self.cb_datum.clear()
+            self.cb_datum.addItems(options + existing)
+            self.cb_datum.setCurrentIndex(0)
+            self.cb_datum.blockSignals(False)
+            self._update_preview()
+        elif options and options[0] != raw:
+            self.cb_datum.setCurrentText(options[0])
 
     def _update_preview(self):
         typ    = database.get_dokumenttyp_display(self.cb_typ.currentText().strip())
@@ -773,12 +812,13 @@ class MainTab(QWidget):
         new_name = os.path.basename(dest)
         self.status_message.emit(f"Archiviert: {new_name}")
         QMessageBox.information(self, "Archiviert", f"Gespeichert als:\n{new_name}")
+        orig_path = self.pdf_path
         self.pdf_path = ""
         self.lbl_file.setText("Kein Dokument geladen")
         self.lbl_source.setText("")
         self._clear_fields()
         self.settings_refresh_requested.emit()
-        self.confirmed.emit()
+        self.confirmed.emit(orig_path)
 
     def _on_confirm_error(self, msg: str):
         self.progress.setVisible(False)
@@ -1331,6 +1371,7 @@ class MainWindow(QMainWindow):
         self.setStatusBar(self._status_bar)
         self.main_tab.status_message.connect(self._status_bar.showMessage)
         self.main_tab.confirmed.connect(self._on_confirmed)
+        self.main_tab.result_ready.connect(self._on_result_ready)
         self.main_tab.pdf_opened.connect(self._show_pdf)
 
     def resizeEvent(self, event):
@@ -1370,12 +1411,17 @@ class MainWindow(QMainWindow):
             self._splitter.setSizes(sizes)
             QTimer.singleShot(0, self._clamp_pdf_width)
 
+    def _on_result_ready(self, path: str, result: dict):
+        if path:
+            self._cache[path] = result
+
     def _show_pdf(self, path: str):
         self._pdf_doc.close()
         if path:
             self._pdf_doc.load(path)
 
-    def _on_confirmed(self):
+    def _on_confirmed(self, orig_path: str):
+        self._cache.pop(orig_path, None)
         self._pdf_doc.close()
         self._load_next()
 
@@ -1395,6 +1441,7 @@ class MainWindow(QMainWindow):
 
     def _load_next(self):
         if not self._queue:
+            self._refresh_queue_list()
             return
         path = self._queue.pop(0)
         # Detach pre-worker for this path (it will finish but result is ignored)
@@ -1407,8 +1454,7 @@ class MainWindow(QMainWindow):
                 pass
         self._refresh_queue_list()
         if path in self._cache:
-            result = self._cache.pop(path)
-            self.main_tab.load_from_result(path, result)
+            self.main_tab.load_from_result(path, self._cache[path])
             self._status_bar.showMessage(
                 f"Geladen aus Cache: {os.path.basename(path)} – Felder prüfen und bestätigen"
             )
@@ -1494,8 +1540,7 @@ class MainWindow(QMainWindow):
         if current and current not in self._queue:
             self._queue.insert(0, current)
         if path in self._cache:
-            result = self._cache.pop(path)
-            self.main_tab.load_from_result(path, result)
+            self.main_tab.load_from_result(path, self._cache[path])
             self._status_bar.showMessage(
                 f"Geladen aus Cache: {os.path.basename(path)} – Felder prüfen und bestätigen"
             )
@@ -1508,7 +1553,6 @@ class MainWindow(QMainWindow):
 def main():
     database.ensure_defaults()
     os.makedirs(EINGANG_DIR, exist_ok=True)
-    os.makedirs(ARCHIV_DIR, exist_ok=True)
 
     app = QApplication(sys.argv)
     app.setApplicationName("PostScan")
