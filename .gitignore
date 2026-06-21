@@ -1,6 +1,7 @@
 eingang/
 archiv/
 stammdaten.json
+config.json
 __pycache__/
 *.pyc
 *.pyo

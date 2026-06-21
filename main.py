@@ -20,9 +20,10 @@ from PyQt6.QtWidgets import (
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
     QMessageBox, QProgressBar, QFrame, QGridLayout, QStatusBar,
     QGroupBox, QTextEdit, QSplitter, QLineEdit, QCompleter,
-    QListWidget, QListWidgetItem,
+    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
 )
 
+import config as app_config
 import database
 import pipeline
 
@@ -319,6 +320,29 @@ class OllamaPullWorker(QThread):
         except Exception as e:
             self.progress.emit(f"Fehler: {e}")
             self.finished.emit(False)
+
+
+class GoogleTestWorker(QThread):
+    result = pyqtSignal(bool, str)   # (success, message)
+
+    def __init__(self, api_key: str):
+        super().__init__()
+        self.api_key = api_key
+
+    def run(self):
+        try:
+            import google.generativeai as genai
+            genai.configure(api_key=self.api_key)
+            model = genai.GenerativeModel(
+                "gemini-2.5-flash-lite",
+                generation_config=genai.types.GenerationConfig(max_output_tokens=10),
+            )
+            model.generate_content("Antworte mit: OK")
+            self.result.emit(True, "Verbindung erfolgreich – API-Schlüssel ist gültig.")
+        except ImportError:
+            self.result.emit(False, "Paket nicht installiert: pip install google-generativeai")
+        except Exception as e:
+            self.result.emit(False, f"Fehler: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -1128,6 +1152,7 @@ class KIStatusTab(QWidget):
         super().__init__(parent)
         self._check_worker: OllamaCheckWorker | None = None
         self._pull_worker: OllamaPullWorker | None = None
+        self._test_worker: GoogleTestWorker | None = None
         self._status: dict = {}
         self._build_ui()
         QTimer.singleShot(800, self._check)
@@ -1136,8 +1161,31 @@ class KIStatusTab(QWidget):
         root = QVBoxLayout(self)
         root.setSpacing(10)
 
-        grp = QGroupBox("Ollama – KI-Backend")
-        v = QVBoxLayout(grp)
+        # ── Provider selection ──────────────────────────────────────────────
+        grp_sel = QGroupBox("KI-Anbieter")
+        sel_layout = QHBoxLayout(grp_sel)
+        self._radio_ollama = QRadioButton("Ollama / phi3:mini  (lokal, offline)")
+        self._radio_google = QRadioButton("Google GenAI / gemini-2.5-flash-lite  (Cloud)")
+        self._provider_group = QButtonGroup(self)
+        self._provider_group.addButton(self._radio_ollama, 0)
+        self._provider_group.addButton(self._radio_google, 1)
+        sel_layout.addWidget(self._radio_ollama)
+        sel_layout.addWidget(self._radio_google)
+        sel_layout.addStretch()
+        btn_save_provider = QPushButton("Speichern")
+        btn_save_provider.clicked.connect(self._save_provider)
+        sel_layout.addWidget(btn_save_provider)
+        root.addWidget(grp_sel)
+
+        # Restore saved selection
+        if app_config.get_provider() == "google":
+            self._radio_google.setChecked(True)
+        else:
+            self._radio_ollama.setChecked(True)
+
+        # ── Ollama section ──────────────────────────────────────────────────
+        self._grp_ollama = QGroupBox("Ollama – Einrichtung")
+        v = QVBoxLayout(self._grp_ollama)
 
         grid = QGridLayout()
         grid.setColumnStretch(1, 1)
@@ -1163,18 +1211,65 @@ class KIStatusTab(QWidget):
         bar.addWidget(self._btn_fix)
         bar.addStretch()
         v.addLayout(bar)
-        root.addWidget(grp)
+        root.addWidget(self._grp_ollama)
 
         self._progress = QProgressBar()
         self._progress.setRange(0, 0)
         self._progress.setVisible(False)
         root.addWidget(self._progress)
 
+        # ── Google GenAI section ────────────────────────────────────────────
+        self._grp_google = QGroupBox("Google GenAI – API-Schlüssel")
+        gv = QVBoxLayout(self._grp_google)
+
+        key_row = QHBoxLayout()
+        key_row.addWidget(QLabel("API-Schlüssel:"))
+        self._le_apikey = QLineEdit()
+        self._le_apikey.setPlaceholderText("AIza…")
+        self._le_apikey.setEchoMode(QLineEdit.EchoMode.Password)
+        self._le_apikey.setText(app_config.get_google_api_key())
+        key_row.addWidget(self._le_apikey)
+        btn_show = QPushButton("Anzeigen")
+        btn_show.setCheckable(True)
+        btn_show.toggled.connect(
+            lambda on: self._le_apikey.setEchoMode(
+                QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
+            )
+        )
+        key_row.addWidget(btn_show)
+        gv.addLayout(key_row)
+
+        g_bar = QHBoxLayout()
+        btn_save_key = QPushButton("Schlüssel speichern")
+        btn_save_key.clicked.connect(self._save_google_key)
+        self._btn_test_google = QPushButton("Verbindung testen")
+        self._btn_test_google.clicked.connect(self._test_google)
+        self._lbl_google_status = QLabel("")
+        g_bar.addWidget(btn_save_key)
+        g_bar.addWidget(self._btn_test_google)
+        g_bar.addWidget(self._lbl_google_status)
+        g_bar.addStretch()
+        gv.addLayout(g_bar)
+        root.addWidget(self._grp_google)
+
+        # ── Shared log ──────────────────────────────────────────────────────
         self._txt = QTextEdit()
         self._txt.setReadOnly(True)
-        self._txt.setMaximumHeight(160)
+        self._txt.setMaximumHeight(140)
         root.addWidget(self._txt)
         root.addStretch()
+
+    # ── Provider save ───────────────────────────────────────────────────────
+
+    def _save_provider(self):
+        provider = "google" if self._radio_google.isChecked() else "ollama"
+        cfg = app_config.load()
+        cfg["llm_provider"] = provider
+        app_config.save(cfg)
+        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else "Ollama (phi3:mini)"
+        self._txt.setPlainText(f"KI-Anbieter gespeichert: {name}")
+
+    # ── Ollama ──────────────────────────────────────────────────────────────
 
     def _set_status(self, label: QLabel, state):
         if state is None:
@@ -1205,7 +1300,7 @@ class KIStatusTab(QWidget):
         all_ok = all(status.values())
         self._btn_fix.setEnabled(not all_ok)
         if all_ok:
-            self._txt.setPlainText("Alles bereit. phi3:mini ist verfügbar und wird für die Klassifikation genutzt.")
+            self._txt.setPlainText("Alles bereit. phi3:mini ist verfügbar und kann für die Klassifikation genutzt werden.")
         else:
             issues = []
             if not status["installed"]:
@@ -1268,6 +1363,37 @@ class KIStatusTab(QWidget):
         else:
             self._txt.append("\nDownload fehlgeschlagen – bitte erneut versuchen.")
             self._btn_fix.setEnabled(True)
+
+    # ── Google GenAI ────────────────────────────────────────────────────────
+
+    def _save_google_key(self):
+        key = self._le_apikey.text().strip()
+        cfg = app_config.load()
+        cfg["google_api_key"] = key
+        app_config.save(cfg)
+        self._lbl_google_status.setText("Gespeichert.")
+        self._lbl_google_status.setStyleSheet("color: green;")
+
+    def _test_google(self):
+        key = self._le_apikey.text().strip()
+        if not key:
+            self._lbl_google_status.setText("Kein API-Schlüssel eingegeben.")
+            self._lbl_google_status.setStyleSheet("color: red;")
+            return
+        self._btn_test_google.setEnabled(False)
+        self._lbl_google_status.setText("Teste …")
+        self._lbl_google_status.setStyleSheet("color: #888;")
+        self._test_worker = GoogleTestWorker(key)
+        self._test_worker.result.connect(self._on_test_done)
+        self._test_worker.start()
+
+    def _on_test_done(self, success: bool, msg: str):
+        self._btn_test_google.setEnabled(True)
+        self._lbl_google_status.setText("✓ OK" if success else "✗ Fehler")
+        self._lbl_google_status.setStyleSheet(
+            "color: green; font-weight: bold;" if success else "color: red; font-weight: bold;"
+        )
+        self._txt.setPlainText(msg)
 
 
 # ---------------------------------------------------------------------------

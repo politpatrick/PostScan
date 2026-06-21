@@ -9,10 +9,12 @@ from rapidfuzz import fuzz
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+import config as app_config
 import database
 
 OLLAMA_URL = "http://localhost:11434/api/chat"
 OLLAMA_MODEL = "phi3:mini"
+GOOGLE_MODEL = "gemini-2.5-flash-lite"
 TFIDF_THRESHOLD = 0.85
 FUZZY_THRESHOLD = 0.80
 DIGITAL_PDF_MIN_CHARS = 100
@@ -278,6 +280,29 @@ def _llm_classify(text: str, rag_context: str) -> tuple[dict, str, str]:
         return {}, f"FEHLER: {e}", prompt
 
 
+def _llm_classify_google(text: str, rag_context: str) -> tuple[dict, str, str]:
+    api_key = app_config.get_google_api_key()
+    if not api_key:
+        return {}, "FEHLER: Kein API-Schlüssel konfiguriert", ""
+    prompt = _build_llm_prompt(text, rag_context)
+    try:
+        import google.generativeai as genai
+        genai.configure(api_key=api_key)
+        model = genai.GenerativeModel(
+            GOOGLE_MODEL,
+            generation_config=genai.types.GenerationConfig(
+                max_output_tokens=256,
+                temperature=0.1,
+            ),
+        )
+        response = model.generate_content(prompt)
+        raw = response.text
+        return _parse_llm_json(raw), raw, prompt
+    except Exception as e:
+        print(f"[Google GenAI] Aufruf fehlgeschlagen: {e}", flush=True)
+        return {}, f"FEHLER: {e}", prompt
+
+
 def analyze(pdf_path: str) -> dict:
     text = run_ocr(pdf_path)
     dates = extract_dates(text)
@@ -333,7 +358,10 @@ def analyze(pdf_path: str) -> dict:
         }
 
     rag = database.get_rag_context()
-    llm, llm_raw, llm_prompt = _llm_classify(text, rag)
+    if app_config.get_provider() == "google":
+        llm, llm_raw, llm_prompt = _llm_classify_google(text, rag)
+    else:
+        llm, llm_raw, llm_prompt = _llm_classify(text, rag)
 
     if llm:
         final_typ = (llm.get("dokumenttyp") or "").strip() or dokumenttyp
