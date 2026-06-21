@@ -117,12 +117,11 @@ def run_ocr(pdf_path: str) -> str:
     return existing_text
 
 
-def _tfidf_classify(text: str) -> tuple[str, str, float, str]:
+def _tfidf_classify(text: str) -> tuple[str, str, float, str, list[dict]]:
     entries = database.load()
     if not entries:
-        return "", "", 0.0, ""
+        return "", "", 0.0, "", []
 
-    # Build expanded corpus: cartesian product of typ variants x absender variants
     typ_syn = {t["name"]: t.get("synonyme", []) for t in database.load_dokumenttypen()}
     abs_syn = {a["name"]: a.get("synonyme", []) for a in database.load_absender()}
     corpus = []
@@ -144,12 +143,29 @@ def _tfidf_classify(text: str) -> tuple[str, str, float, str]:
         sims = cosine_similarity(query_matrix, corpus_matrix)[0]
         best_idx = int(sims.argmax())
         best_score = float(sims[best_idx])
+
+        # Top-5 unique (typ, ab) pairs by score
+        seen: set[tuple] = set()
+        top: list[dict] = []
+        for idx in sims.argsort()[::-1]:
+            key = corpus_keys[idx]
+            if key not in seen:
+                seen.add(key)
+                top.append({
+                    "score": round(float(sims[idx]), 3),
+                    "corpus": corpus[idx],
+                    "typ": key[0],
+                    "ab": key[1],
+                })
+            if len(top) >= 5:
+                break
+
         if best_score > 0:
             typ, ab = corpus_keys[best_idx]
-            return typ, ab, best_score, corpus[best_idx]
+            return typ, ab, best_score, corpus[best_idx], top
     except Exception:
         pass
-    return "", "", 0.0, ""
+    return "", "", 0.0, "", []
 
 
 
@@ -174,23 +190,37 @@ def _parse_llm_json(raw: str) -> dict:
         except json.JSONDecodeError:
             pass
 
+    # Strategy 3: key-by-key regex extraction for malformed JSON
+    result = {}
+    for key in ("dokumenttyp", "absender", "dokumentdatum", "personenbezug"):
+        m = re.search(rf'"{key}"\s*:\s*"([^"]*)"', raw)
+        if m:
+            result[key] = m.group(1)
+    if result:
+        return result
+
     return {}
 
 
-def _llm_classify(text: str, rag_context: str) -> dict:
+def _build_llm_prompt(text: str, rag_context: str) -> str:
     truncated = text[:3000]
-    prompt = (
+    return (
         f"{rag_context}\n\n"
         "Analysiere den folgenden Dokumenttext und extrahiere genau diese vier Felder als JSON.\n"
         "Regeln:\n"
-        '- "dokumenttyp": Typ des Dokuments (z.B. Rechnung, Bescheid, Vertrag, Brief, Kontoauszug)\n'
-        '- "absender": Absender / Unternehmen / Behörde\n'
+        '- "dokumenttyp": Typ des Dokuments. Nutze einen bekannten Typ wenn passend, '
+        "sonst gib den treffendsten deutschen Begriff an (z.B. Steuerbescheinigung, Kündigung, Mahnung).\n"
+        '- "absender": Name des Absenders / Unternehmens / Behörde. Nutze einen bekannten Absender '
+        "wenn passend, sonst gib den tatsächlichen Namen aus dem Text an.\n"
         '- "dokumentdatum": Datum im Format vDD.MM.YY (z.B. v21.06.26), sonst ""\n'
         '- "personenbezug": Nur Nachname der Person, sonst ""\n'
         "Antworte NUR mit einem JSON-Objekt. Kein Fließtext, keine Markdown-Codeblöcke.\n\n"
         f"Dokumenttext:\n{truncated}\n\nJSON:"
     )
 
+
+def _llm_classify(text: str, rag_context: str) -> tuple[dict, str, str]:
+    prompt = _build_llm_prompt(text, rag_context)
     try:
         resp = requests.post(
             OLLAMA_URL,
@@ -205,9 +235,9 @@ def _llm_classify(text: str, rag_context: str) -> dict:
         )
         resp.raise_for_status()
         raw = resp.json().get("response", "")
-        return _parse_llm_json(raw), raw
+        return _parse_llm_json(raw), raw, prompt
     except Exception:
-        return {}, ""
+        return {}, "", prompt
 
 
 def analyze(pdf_path: str) -> dict:
@@ -215,10 +245,11 @@ def analyze(pdf_path: str) -> dict:
     dates = extract_dates(text)
     primary_date = dates[0] if dates else ""
 
-    dokumenttyp, absender, score, tfidf_match = _tfidf_classify(text)
+    dokumenttyp, absender, score, tfidf_match, tfidf_top = _tfidf_classify(text)
 
-    # Fast-Lane: skip LLM if confidence is high enough and date is clear
-    if score >= TFIDF_THRESHOLD and primary_date:
+    fast_lane = score >= TFIDF_THRESHOLD and bool(primary_date)
+
+    if fast_lane:
         persons = database.get_persons()
         return {
             "dokumenttyp": dokumenttyp,
@@ -228,24 +259,58 @@ def analyze(pdf_path: str) -> dict:
             "personenbezug": persons[0] if len(persons) == 1 else "",
             "confidence": round(score, 3),
             "source": "tfidf",
+            "fast_lane": True,
             "tfidf_match": tfidf_match,
+            "tfidf_top": tfidf_top,
+            "rag_context": "",
+            "llm_prompt": "",
+            "llm_parsed": {},
             "llm_raw": "",
             "ocr_text": text,
         }
 
-    # LLM Fallback with RAG context
     rag = database.get_rag_context()
-    llm, llm_raw = _llm_classify(text, rag)
+    llm, llm_raw, llm_prompt = _llm_classify(text, rag)
+
+    if llm:
+        final_typ = (llm.get("dokumenttyp") or "").strip() or dokumenttyp
+        final_ab  = (llm.get("absender")    or "").strip() or absender
+    else:
+        final_typ = dokumenttyp
+        final_ab  = absender
+
+    # Detect unknowns: check against names + synonyms (case-insensitive)
+    known_typen = {t["name"].lower() for t in database.load_dokumenttypen()}
+    for t in database.load_dokumenttypen():
+        known_typen.update(s.lower() for s in t.get("synonyme", []))
+    known_abs = {a["name"].lower() for a in database.load_absender()}
+    for a in database.load_absender():
+        known_abs.update(s.lower() for s in a.get("synonyme", []))
+
+    vorschlag_typ = bool(final_typ) and final_typ.lower() not in known_typen
+    vorschlag_ab  = bool(final_ab)  and final_ab.lower()  not in known_abs
+
+    if vorschlag_typ:
+        database.add_vorschlag_dokumenttyp(final_typ)
+    if vorschlag_ab:
+        database.add_vorschlag_absender(final_ab)
 
     return {
-        "dokumenttyp": llm.get("dokumenttyp") or dokumenttyp,
-        "absender": llm.get("absender") or absender,
+        "dokumenttyp": final_typ,
+        "absender": final_ab,
         "dokumentdatum": llm.get("dokumentdatum") or primary_date,
         "dokumentdatum_candidates": dates,
         "personenbezug": llm.get("personenbezug", ""),
         "confidence": round(score, 3),
         "source": "llm",
+        "fast_lane": False,
+        "vorschlag_typ": vorschlag_typ,
+        "vorschlag_ab":  vorschlag_ab,
         "tfidf_match": tfidf_match,
+        "tfidf_top": tfidf_top,
+        "rag_context": rag,
+        "llm_prompt": llm_prompt,
+        "llm_parsed": llm,
         "llm_raw": llm_raw,
         "ocr_text": text,
     }

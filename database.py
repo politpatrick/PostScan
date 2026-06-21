@@ -20,6 +20,7 @@ _DEFAULTS = {
         {"name": "Unbekannt",   "abk": "",     "synonyme": []},
     ],
     "personen": ["Kunze"],
+    "vorschlaege": {"dokumenttypen": [], "absender": []},
     "kombinationen": [
         {"dokumenttyp": "Rechnung",    "absender": "HUK-COBURG"},
         {"dokumenttyp": "Rechnung",    "absender": "AOK Bayern"},
@@ -63,6 +64,7 @@ def _load_all() -> dict:
             "dokumenttypen": [_to_dict(t) for t in raw_typ],
             "absender":      [_to_dict(a) for a in raw_abs],
             "personen":      data.get("personen", []),
+            "vorschlaege":   data.get("vorschlaege", {"dokumenttypen": [], "absender": []}),
             "kombinationen": data.get("kombinationen", []),
         }
         # Save back if either list was migrated from strings
@@ -271,6 +273,44 @@ def get_rag_context() -> str:
             lines.append(f"  - {e.get('dokumenttyp', '')} -> {e.get('absender', '')}")
 
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Vorschläge (KI-erkannte, noch nicht bestätigte Einträge)
+# ---------------------------------------------------------------------------
+
+def load_vorschlaege() -> dict:
+    return _load_all().get("vorschlaege", {"dokumenttypen": [], "absender": []})
+
+def _add_vorschlag(field: str, name: str) -> None:
+    if not name:
+        return
+    d = _load_all()
+    v = d.setdefault("vorschlaege", {"dokumenttypen": [], "absender": []})
+    if name not in v.get(field, []):
+        v.setdefault(field, []).append(name)
+        _save_all(d)
+
+def add_vorschlag_dokumenttyp(name: str) -> None:
+    _add_vorschlag("dokumenttypen", name)
+
+def add_vorschlag_absender(name: str) -> None:
+    _add_vorschlag("absender", name)
+
+def remove_vorschlag(field: str, name: str) -> None:
+    d = _load_all()
+    v = d.get("vorschlaege", {})
+    if name in v.get(field, []):
+        v[field].remove(name)
+        _save_all(d)
+
+def promote_vorschlag_dokumenttyp(name: str) -> None:
+    remove_vorschlag("dokumenttypen", name)
+    add_dokumenttyp(name)
+
+def promote_vorschlag_absender(name: str) -> None:
+    remove_vorschlag("absender", name)
+    add_absender(name)
 
 
 # ---------------------------------------------------------------------------

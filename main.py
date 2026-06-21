@@ -7,8 +7,10 @@ from datetime import date as _today_date
 
 import pikepdf
 import xattr
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel, QUrl
 from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor
+from PyQt6.QtPdf import QPdfDocument
+from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QPushButton, QComboBox, QTabWidget, QFileDialog,
@@ -226,7 +228,7 @@ class ConfirmWorker(QThread):
             os.makedirs(ARCHIV_DIR, exist_ok=True)
             typ_display = database.get_dokumenttyp_display(self.typ)
             ab_display  = database.get_absender_display(self.ab)
-            parts = [p for p in [typ_display, self.zusatz, ab_display, dat_v, self.per] if p]
+            parts = [p.replace(" ", "_") for p in [typ_display, self.zusatz, ab_display, dat_v, self.per] if p]
             new_name = "_".join(parts) + ".pdf"
             base, ext = os.path.splitext(new_name)
             dest = os.path.join(ARCHIV_DIR, new_name)
@@ -552,9 +554,17 @@ class MainTab(QWidget):
         source = result.get("source", "")
         conf = result.get("confidence", 0.0)
         if source == "tfidf":
-            self.lbl_source.setText(f"Fast-Lane (TF-IDF) · Konfidenz: {conf:.0%}")
+            src_text = f"Fast-Lane (TF-IDF) · Konfidenz: {conf:.0%}"
         else:
-            self.lbl_source.setText(f"LLM-Fallback (phi3:mini) · TF-IDF: {conf:.0%}")
+            src_text = f"LLM-Fallback (phi3:mini) · TF-IDF: {conf:.0%}"
+        neu_parts = []
+        if result.get("vorschlag_typ"):
+            neu_parts.append(f"Typ: {result.get('dokumenttyp', '')}")
+        if result.get("vorschlag_ab"):
+            neu_parts.append(f"Absender: {result.get('absender', '')}")
+        if neu_parts:
+            src_text += f"  |  neu erkannt: {', '.join(neu_parts)}"
+        self.lbl_source.setText(src_text)
 
         def _set(combo: QComboBox, value: str):
             idx = combo.findText(value)
@@ -578,16 +588,66 @@ class MainTab(QWidget):
         else:
             self.cb_datum.setCurrentText(_strip_v(result.get("dokumentdatum", "")))
 
+        sep = "─" * 60
         debug_lines = []
-        tfidf_match = result.get("tfidf_match", "")
-        if tfidf_match:
-            debug_lines.append(f"[TF-IDF] Bester Treffer: \"{tfidf_match}\" - Konfidenz: {result.get('confidence', 0):.0%}")
+
+        # ── 1. OCR ────────────────────────────────────────────────────
+        ocr_text = result.get("ocr_text", "")
+        debug_lines += [sep, "[ 1 ] OCR-TEXT", sep, ocr_text, ""]
+
+        # ── 2. Datumserkennung ────────────────────────────────────────
+        candidates = result.get("dokumentdatum_candidates", [])
+        debug_lines += [
+            sep, "[ 2 ] DATUMSERKENNUNG", sep,
+            f"Kandidaten: {', '.join(candidates) if candidates else '(keine)'}",
+            ""
+        ]
+
+        # ── 3. TF-IDF ────────────────────────────────────────────────
+        debug_lines += [sep, "[ 3 ] TF-IDF KLASSIFIKATION", sep]
+        for i, t in enumerate(result.get("tfidf_top", []), 1):
+            marker = "►" if i == 1 else " "
+            debug_lines.append(
+                f"  {marker} #{i}  {t['score']:.1%}  {t['corpus']!r}  →  {t['typ']} / {t['ab']}"
+            )
+        conf = result.get("confidence", 0)
+        fast = result.get("fast_lane", False)
+        threshold = 0.85
+        debug_lines += [
+            "",
+            f"  Konfidenz: {conf:.1%}  |  Schwellwert: {threshold:.0%}  |  "
+            f"Fast-Lane: {'JA → LLM übersprungen' if fast else 'NEIN → LLM-Fallback'}",
+            ""
+        ]
+
+        # ── 4. RAG-Kontext ────────────────────────────────────────────
+        rag = result.get("rag_context", "")
+        debug_lines += [sep, "[ 4 ] RAG-KONTEXT (an LLM gesendet)", sep, rag or "(keine)", ""]
+
+        # ── 5. LLM-Prompt ─────────────────────────────────────────────
+        llm_prompt = result.get("llm_prompt", "")
+        debug_lines += [sep, "[ 5 ] LLM-PROMPT", sep, llm_prompt or "(keine)", ""]
+
+        # ── 6. LLM-Rohantwort ─────────────────────────────────────────
         llm_raw = result.get("llm_raw", "")
-        if llm_raw:
-            debug_lines.append(f"[LLM] Rohantwort: {llm_raw.strip()}")
-        if debug_lines:
-            debug_lines.append("")
-        debug_lines.append(result.get("ocr_text", ""))
+        debug_lines += [sep, "[ 6 ] LLM-ROHANTWORT", sep, llm_raw.strip() if llm_raw else "(keine)", ""]
+
+        # ── 7. LLM-Parsed JSON ────────────────────────────────────────
+        import json as _json
+        llm_parsed = result.get("llm_parsed", {})
+        debug_lines += [sep, "[ 7 ] LLM-PARSED JSON", sep,
+                        _json.dumps(llm_parsed, ensure_ascii=False, indent=2) if llm_parsed else "(keine)", ""]
+
+        # ── 8. Endergebnis ────────────────────────────────────────────
+        debug_lines += [
+            sep, "[ 8 ] ENDERGEBNIS", sep,
+            f"  Dokumenttyp : {result.get('dokumenttyp', '')}",
+            f"  Absender    : {result.get('absender', '')}",
+            f"  Datum       : {result.get('dokumentdatum', '')}",
+            f"  Person      : {result.get('personenbezug', '')}",
+            f"  Quelle      : {result.get('source', '').upper()}",
+        ]
+
         self.txt_ocr.setPlainText("\n".join(debug_lines))
         self.btn_confirm.setEnabled(True)
         self._update_preview()
@@ -612,7 +672,7 @@ class MainTab(QWidget):
         dat    = self.cb_datum.currentText().strip()
         dat    = f"v{dat}" if dat and not dat.startswith("v") else dat
         per    = self.cb_person.currentText().strip()
-        parts = [p for p in [typ, zusatz, ab, dat, per] if p]
+        parts = [p.replace(" ", "_") for p in [typ, zusatz, ab, dat, per] if p]
         self.lbl_preview.setText("_".join(parts) + ".pdf" if parts else "—")
 
     def _confirm(self):
@@ -674,9 +734,12 @@ def _make_single_table(header: str) -> QTableWidget:
     return t
 
 
-def _table_values(table: QTableWidget, col: int = 0) -> list[str]:
+def _table_values(table: QTableWidget, col: int = 0, selected_only: bool = False) -> list[str]:
     result = []
+    selected_rows = {i.row() for i in table.selectedIndexes()} if selected_only else None
     for row in range(table.rowCount()):
+        if selected_rows is not None and row not in selected_rows:
+            continue
         v = (table.item(row, col) or QTableWidgetItem("")).text().strip()
         if v:
             result.append(v)
@@ -750,6 +813,28 @@ class SettingsTab(QWidget):
         vk.addLayout(bar_k)
         root.addWidget(grp_k)
 
+        # ── Vorschläge ───────────────────────────────────────────────
+        grp_v = QGroupBox("KI-Vorschläge – neu erkannte Einträge")
+        vv = QVBoxLayout(grp_v)
+
+        vv.addWidget(QLabel("Dokumenttypen:"))
+        self.tbl_vtyp = _make_single_table("Name")
+        vv.addWidget(self.tbl_vtyp)
+
+        vv.addWidget(QLabel("Absender:"))
+        self.tbl_vabs = _make_single_table("Name")
+        vv.addWidget(self.tbl_vabs)
+
+        bar_v = QHBoxLayout()
+        btn_v_acc = QPushButton("Übernehmen")
+        btn_v_rej = QPushButton("Ablehnen")
+        btn_v_acc.clicked.connect(self._accept_vorschlag)
+        btn_v_rej.clicked.connect(self._reject_vorschlag)
+        bar_v.addWidget(btn_v_acc)
+        bar_v.addWidget(btn_v_rej)
+        vv.addLayout(bar_v)
+        root.addWidget(grp_v)
+
     @staticmethod
     def _grp(title: str, table: QTableWidget, fn_add, fn_del, fn_save) -> QGroupBox:
         grp = QGroupBox(title)
@@ -764,6 +849,9 @@ class SettingsTab(QWidget):
         return grp
 
     def refresh(self):
+        v = database.load_vorschlaege()
+        _fill_single(self.tbl_vtyp, v.get("dokumenttypen", []))
+        _fill_single(self.tbl_vabs, v.get("absender", []))
         _fill_single(self.tbl_pers, database.get_persons())
 
         typen = database.load_dokumenttypen()
@@ -839,6 +927,22 @@ class SettingsTab(QWidget):
         database.save_persons(sorted(_table_values(self.tbl_pers)))
         QMessageBox.information(self, "Gespeichert", "Personen gespeichert.")
 
+    # Vorschläge
+    def _accept_vorschlag(self):
+        for name in _table_values(self.tbl_vtyp, selected_only=True):
+            database.promote_vorschlag_dokumenttyp(name)
+        for name in _table_values(self.tbl_vabs, selected_only=True):
+            database.promote_vorschlag_absender(name)
+        self.refresh()
+        QMessageBox.information(self, "Übernommen", "Auswahl in Stammdaten übernommen.")
+
+    def _reject_vorschlag(self):
+        for name in _table_values(self.tbl_vtyp, selected_only=True):
+            database.remove_vorschlag("dokumenttypen", name)
+        for name in _table_values(self.tbl_vabs, selected_only=True):
+            database.remove_vorschlag("absender", name)
+        self.refresh()
+
     # KI-Kombinationen
     def _add_kombi(self):
         r = self.tbl_kombi.rowCount(); self.tbl_kombi.insertRow(r)
@@ -878,6 +982,7 @@ class MainWindow(QMainWindow):
 
         # Tabs (centre)
         self._tabs = QTabWidget()
+        self._tabs.setMinimumWidth(280)
         self.main_tab = MainTab()
         self.settings_tab = SettingsTab()
         self.main_tab.settings_refresh_requested.connect(self.settings_tab.refresh)
@@ -903,8 +1008,9 @@ class MainWindow(QMainWindow):
         qp_layout.addWidget(self._lbl_queue)
 
         self._lst_queue = QListWidget()
-        self._lst_queue.setSelectionMode(QListWidget.SelectionMode.NoSelection)
+        self._lst_queue.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._lst_queue.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._lst_queue.itemClicked.connect(self._on_queue_item_clicked)
         qp_layout.addWidget(self._lst_queue, stretch=1)
 
         self._btn_clear = QPushButton("Leeren")
@@ -912,22 +1018,23 @@ class MainWindow(QMainWindow):
         qp_layout.addWidget(self._btn_clear)
 
         # ── Right panel: PDF viewer ─────────────────────────────────────
-        from PyQt6.QtWebEngineWidgets import QWebEngineView
-        from PyQt6.QtCore import QUrl
-
-        self._pdf_view = QWebEngineView(self)
+        self._pdf_doc = QPdfDocument(self)
+        self._pdf_view = QPdfView(self)
+        self._pdf_view.setDocument(self._pdf_doc)
+        self._pdf_view.setPageMode(QPdfView.PageMode.MultiPage)
+        self._pdf_view.setZoomMode(QPdfView.ZoomMode.FitInView)
         self._pdf_view.setMinimumWidth(300)
 
         # ── Three-panel horizontal splitter ─────────────────────────────
-        splitter = QSplitter(Qt.Orientation.Horizontal)
-        splitter.addWidget(queue_panel)
-        splitter.addWidget(self._tabs)
-        splitter.addWidget(self._pdf_view)
-        splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setStretchFactor(2, 2)
-        splitter.setSizes([180, 420, 600])
-        self.setCentralWidget(splitter)
+        self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.addWidget(queue_panel)
+        self._splitter.addWidget(self._tabs)
+        self._splitter.addWidget(self._pdf_view)
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 2)
+        self._splitter.setSizes([180, 420, 600])
+        self.setCentralWidget(self._splitter)
 
         self._status_bar = QStatusBar()
         self._status_bar.showMessage("PostScan bereit – PDFs in der Warteschlange ablegen")
@@ -936,15 +1043,26 @@ class MainWindow(QMainWindow):
         self.main_tab.confirmed.connect(self._on_confirmed)
         self.main_tab.pdf_opened.connect(self._show_pdf)
 
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        QTimer.singleShot(0, self._clamp_pdf_width)
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        QTimer.singleShot(0, self._clamp_pdf_width)
+
+    def _clamp_pdf_width(self):
+        total = self._splitter.width()
+        if total > 0:
+            self._pdf_view.setMaximumWidth(int(total * 0.4))
+
     def _show_pdf(self, path: str):
-        from PyQt6.QtCore import QUrl
+        self._pdf_doc.close()
         if path:
-            self._pdf_view.load(QUrl.fromLocalFile(path))
-        else:
-            self._pdf_view.setHtml("")
+            self._pdf_doc.load(path)
 
     def _on_confirmed(self):
-        self._pdf_view.setHtml("")
+        self._pdf_doc.close()
         self._load_next()
 
     # ------------------------------------------------------------------
@@ -1017,23 +1135,57 @@ class MainWindow(QMainWindow):
 
     def _refresh_queue_list(self):
         self._lst_queue.clear()
+        current = self.main_tab.pdf_path
+
+        if current:
+            item = QListWidgetItem(f"▶  {os.path.basename(current)}")
+            item.setForeground(QColor("#007aff"))
+            item.setData(Qt.ItemDataRole.UserRole, current)
+            item.setToolTip(current)
+            self._lst_queue.addItem(item)
+
         for path in self._queue:
             name = os.path.basename(path)
             if path in self._cache:
-                text = f"✓ {name}"
+                text = f"✓  {name}"
                 color = QColor("#2e7d32")
             elif path in self._pre_workers:
-                text = f"⋯ {name}"
+                text = f"⋯  {name}"
                 color = QColor("#888")
             else:
-                text = f"  {name}"
+                text = f"    {name}"
                 color = QColor("#333")
             item = QListWidgetItem(text)
             item.setForeground(color)
             item.setToolTip(path)
+            item.setData(Qt.ItemDataRole.UserRole, path)
             self._lst_queue.addItem(item)
-        count = len(self._queue)
+
+        count = len(self._queue) + (1 if current else 0)
         self._lbl_queue.setText(f"Warteschlange ({count})" if count else "Warteschlange")
+
+    def _on_queue_item_clicked(self, item):
+        path = item.data(Qt.ItemDataRole.UserRole)
+        if not path or path == self.main_tab.pdf_path:
+            return
+        self._switch_to(path)
+
+    def _switch_to(self, path: str):
+        current = self.main_tab.pdf_path
+        if path in self._queue:
+            self._queue.remove(path)
+        if current and current not in self._queue:
+            self._queue.insert(0, current)
+        if path in self._cache:
+            result = self._cache.pop(path)
+            self.main_tab.load_from_result(path, result)
+            self._status_bar.showMessage(
+                f"Geladen aus Cache: {os.path.basename(path)} – Felder prüfen und bestätigen"
+            )
+        else:
+            self.main_tab.load_pdf(path)
+        self._start_preprocessing()
+        self._refresh_queue_list()
 
 
 def main():
