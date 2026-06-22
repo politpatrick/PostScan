@@ -1783,6 +1783,7 @@ class MainWindow(QMainWindow):
 
         # Tabs (centre)
         self._tabs = QTabWidget()
+        self._tabs.setDocumentMode(True)
         self._tabs.setMinimumWidth(280)
         self.main_tab = MainTab()
         self.settings_tab = SettingsTab()
@@ -1867,6 +1868,7 @@ class MainWindow(QMainWindow):
 
         # ── Three-panel horizontal splitter ─────────────────────────────
         self._splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._splitter.setHandleWidth(1)
         self._splitter.addWidget(self._queue_panel)
         self._splitter.addWidget(self._tabs)
         self._splitter.addWidget(self._pdf_view)
@@ -2227,6 +2229,9 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("PostScan")
+    app.setOrganizationName("Patrick Kunze")
+    app.setOrganizationDomain("de.pkunze")
+    app.setApplicationVersion("3.0")
 
     icon_path = os.path.join(os.path.dirname(__file__), "icon.png")
     if os.path.exists(icon_path):
@@ -2243,6 +2248,8 @@ def main():
     window = MainWindow()
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
+    if _MACOS:
+        window.setUnifiedTitleAndToolBarOnMac(True)
     window.show()
     sys.exit(app.exec())
 
