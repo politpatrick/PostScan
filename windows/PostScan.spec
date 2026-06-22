@@ -1,14 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+
+ROOT = os.path.abspath(os.path.join(SPECPATH, '..'))
 
 block_cipher = None
 
 a = Analysis(
-    ['main.py'],
-    pathex=['.'],
+    [os.path.join(ROOT, 'main.py')],
+    pathex=[ROOT],
     binaries=[],
     datas=[
-        ('stammdaten.json', '.'),
-        ('icon.png', '.'),
+        (os.path.join(ROOT, 'stammdaten.json'), '.'),
+        (os.path.join(ROOT, 'icon.png'), '.'),
     ],
     hiddenimports=[
         'PyQt6.QtWebEngineWidgets',
@@ -43,7 +46,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon='icon.png',
+    icon=os.path.join(ROOT, 'icon.png'),
 )
 
 coll = COLLECT(
