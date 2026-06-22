@@ -273,7 +273,7 @@ class ConfirmWorker(QThread):
                 os.rename(self.pdf_path, dest)
             tags = [t for t in [self.typ, self.ab, self.per] if t]
             if tags:
-                _set_macos_tags(dest, tags)
+                _set_file_tags(dest, tags)
             self.result_ready.emit(dest)
         except Exception as e:
             self.error.emit(str(e))
@@ -406,6 +406,27 @@ def _set_macos_tags(path: str, tags: list[str]) -> None:
         return
     plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
     xattr.setxattr(path, "com.apple.metadata:_kMDItemUserTags", plist_bytes)
+
+
+def _set_windows_tags(path: str, tags: list[str]) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import pythoncom
+        from win32com.propsys import propsys, pscon
+        store = propsys.SHGetPropertyStoreFromParsingName(
+            os.path.abspath(path), None, 2  # GPS_READWRITE
+        )
+        pv = propsys.PROPVARIANTType(tags, pythoncom.VT_VECTOR | pythoncom.VT_BSTR)
+        store.SetValue(pscon.PKEY_Keywords, pv)
+        store.Commit()
+    except Exception as e:
+        print(f"[Windows Tags] Fehler: {e}", flush=True)
+
+
+def _set_file_tags(path: str, tags: list[str]) -> None:
+    _set_macos_tags(path, tags)
+    _set_windows_tags(path, tags)
 
 
 # ---------------------------------------------------------------------------

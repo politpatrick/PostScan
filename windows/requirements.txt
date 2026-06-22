@@ -6,4 +6,5 @@ requests>=2.31.0
 ocrmypdf>=16.0.0
 PyQt6-WebEngine>=6.6.0
 google-genai>=1.0.0
+pywin32>=306
 pyinstaller>=6.0.0
