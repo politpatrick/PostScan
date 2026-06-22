@@ -1091,7 +1091,6 @@ class MainTab(QWidget):
         self.btn_open.setEnabled(True)
         new_name = os.path.basename(dest)
         self.status_message.emit(f"Archiviert: {new_name}")
-        QMessageBox.information(self, "Archiviert", f"Gespeichert als:\n{new_name}")
         orig_path = self.pdf_path
         self.pdf_path = ""
         self.lbl_file.setText("Kein Dokument geladen")
@@ -1167,6 +1166,8 @@ def _fill_single(table: QTableWidget, items: list[str]) -> None:
 
 
 class SettingsTab(QWidget):
+    status_message = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._build_ui()
@@ -1341,7 +1342,7 @@ class SettingsTab(QWidget):
                 synonyme = [s.strip() for s in syns.split(",") if s.strip()]
                 entries.append({"name": name, "abk": abk, "synonyme": synonyme})
         database.save_dokumenttypen(sorted(entries, key=lambda t: t["name"]))
-        QMessageBox.information(self, "Gespeichert", "Dokumenttypen gespeichert.")
+        self.status_message.emit("Dokumenttypen gespeichert.")
 
     # Absender
     def _add_abs(self):
@@ -1362,7 +1363,7 @@ class SettingsTab(QWidget):
                 synonyme = [s.strip() for s in syns.split(",") if s.strip()]
                 entries.append({"name": name, "abk": abk, "synonyme": synonyme})
         database.save_absender(sorted(entries, key=lambda a: a["name"]))
-        QMessageBox.information(self, "Gespeichert", "Absender gespeichert.")
+        self.status_message.emit("Absender gespeichert.")
 
     # Personen
     def _add_pers(self):
@@ -1373,7 +1374,7 @@ class SettingsTab(QWidget):
             self.tbl_pers.removeRow(r)
     def _save_pers(self):
         database.save_persons(sorted(_table_values(self.tbl_pers)))
-        QMessageBox.information(self, "Gespeichert", "Personen gespeichert.")
+        self.status_message.emit("Personen gespeichert.")
 
     # Vorschläge
     def _accept_vorschlag(self):
@@ -1382,7 +1383,7 @@ class SettingsTab(QWidget):
         for name in _table_values(self.tbl_vabs, selected_only=True):
             database.promote_vorschlag_absender(name)
         self.refresh()
-        QMessageBox.information(self, "Übernommen", "Auswahl in Stammdaten übernommen.")
+        self.status_message.emit("Auswahl in Stammdaten übernommen.")
 
     def _reject_vorschlag(self):
         for name in _table_values(self.tbl_vtyp, selected_only=True):
@@ -1419,7 +1420,7 @@ class SettingsTab(QWidget):
                 "absender":    (self.tbl_kombi.item(r, 1) or QTableWidgetItem("")).text().strip(),
             })
         database.save(entries)
-        QMessageBox.information(self, "Gespeichert", "KI-Kontext gespeichert.")
+        self.status_message.emit("KI-Kontext gespeichert.")
 
 
 # ---------------------------------------------------------------------------
@@ -1427,6 +1428,8 @@ class SettingsTab(QWidget):
 # ---------------------------------------------------------------------------
 
 class KIStatusTab(QWidget):
+    status_message = pyqtSignal(str)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self._check_worker: OllamaCheckWorker | None = None
@@ -1614,6 +1617,7 @@ class KIStatusTab(QWidget):
         model = app_config.get_ollama_model()
         name = "Google GenAI" if provider == "google" else "Ollama"
         self._txt.setPlainText(f"KI-Anbieter gespeichert: {name}")
+        self.status_message.emit(f"KI-Anbieter gespeichert: {name}")
 
     def _save_ollama_model(self):
         model = self._cb_ollama_model.currentText()
@@ -1622,6 +1626,7 @@ class KIStatusTab(QWidget):
         app_config.save(cfg)
         self._update_model_label()
         self._txt.setPlainText(f"Ollama-Modell gespeichert: {model}")
+        self.status_message.emit(f"Ollama-Modell gespeichert: {model}")
 
     def _update_model_label(self):
         model = self._cb_ollama_model.currentText() if hasattr(self, '_cb_ollama_model') else app_config.get_ollama_model()
@@ -1884,6 +1889,8 @@ class MainWindow(QMainWindow):
         self._status_bar.showMessage("PostScan bereit – PDFs in der Warteschlange ablegen")
         self.setStatusBar(self._status_bar)
         self.main_tab.status_message.connect(self._status_bar.showMessage)
+        self.settings_tab.status_message.connect(self._status_bar.showMessage)
+        self.ki_tab.status_message.connect(self._status_bar.showMessage)
         self.main_tab.confirmed.connect(self._on_confirmed)
         self.main_tab.result_ready.connect(self._on_result_ready)
         self.main_tab.pdf_opened.connect(self._show_pdf)
