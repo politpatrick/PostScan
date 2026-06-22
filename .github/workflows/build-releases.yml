@@ -85,22 +85,70 @@ jobs:
           name: PostScan-macOS
           path: dist/PostScan.dmg
 
-  publish-release:
-    needs: [build-windows, build-macos]
+  package-scripts:
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - name: Download Windows artifact
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Erstelle Script-ZIP (Windows)
+        run: |
+          mkdir -p script_pkg_win
+          cp main.py pipeline.py database.py config.py requirements.txt \
+             setup-windows.bat start-windows.bat stammdaten_template.json icon.png \
+             script_pkg_win/
+          cd script_pkg_win && zip -r ../PostScan-Windows-Script.zip .
+
+      - name: Erstelle Script-ZIP (macOS)
+        run: |
+          mkdir -p script_pkg_mac
+          cp main.py pipeline.py database.py config.py requirements.txt \
+             setup-macos.sh stammdaten_template.json icon.png \
+             script_pkg_mac/
+          cp "PostScan starten.command" script_pkg_mac/
+          cd script_pkg_mac && zip -r ../PostScan-macOS-Script.zip .
+
+      - name: Upload Windows Script ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: PostScan-Windows-Script
+          path: PostScan-Windows-Script.zip
+
+      - name: Upload macOS Script ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: PostScan-macOS-Script
+          path: PostScan-macOS-Script.zip
+
+  publish-release:
+    needs: [build-windows, build-macos, package-scripts]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows installer
         uses: actions/download-artifact@v4
         with:
           name: PostScan-Windows
 
-      - name: Download macOS artifact
+      - name: Download macOS DMG
         uses: actions/download-artifact@v4
         with:
           name: PostScan-macOS
+
+      - name: Download Windows Script ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: PostScan-Windows-Script
+
+      - name: Download macOS Script ZIP
+        uses: actions/download-artifact@v4
+        with:
+          name: PostScan-macOS-Script
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -108,5 +156,16 @@ jobs:
           files: |
             PostScan-Setup.exe
             PostScan.dmg
-          body: "PostScan – Windows-Installer und macOS-DMG"
+            PostScan-Windows-Script.zip
+            PostScan-macOS-Script.zip
+          body: |
+            ## PostScan
+
+            ### Installer (empfohlen)
+            - **Windows**: `PostScan-Setup.exe`
+            - **macOS**: `PostScan.dmg`
+
+            ### Skript-Variante (kein Installer, kein Antivirenproblem)
+            - **Windows**: `PostScan-Windows-Script.zip` → entpacken → `setup-windows.bat` (einmalig) → `start-windows.bat`
+            - **macOS**: `PostScan-macOS-Script.zip` → entpacken → `setup-macos.sh` (einmalig) → `PostScan starten.command`
           generate_release_notes: false
