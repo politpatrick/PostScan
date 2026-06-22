@@ -1,7 +1,18 @@
 import json
 import os
+import sys
 
-STAMMDATEN_PATH = os.path.join(os.path.dirname(__file__), "stammdaten.json")
+
+def _stammdaten_path() -> str:
+    if sys.platform == "win32":
+        base = os.environ.get("APPDATA", os.path.expanduser("~"))
+        folder = os.path.join(base, "PostScan")
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, "stammdaten.json")
+    return os.path.join(os.path.dirname(__file__), "stammdaten.json")
+
+
+STAMMDATEN_PATH = _stammdaten_path()
 
 _DEFAULTS = {
     "dokumenttypen": [

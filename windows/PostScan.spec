@@ -10,7 +10,6 @@ a = Analysis(
     pathex=[ROOT],
     binaries=[],
     datas=[
-        (os.path.join(ROOT, 'stammdaten.json'), '.'),
         (os.path.join(ROOT, 'icon.png'), '.'),
     ],
     hiddenimports=[
