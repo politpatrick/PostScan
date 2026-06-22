@@ -17,7 +17,6 @@ DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=.
 OutputBaseFilename=PostScan-Setup
-SetupIconFile=..\icon.png
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
