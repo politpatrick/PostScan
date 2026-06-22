@@ -1,8 +1,13 @@
 import json
 import os
+import sys
 
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
-OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b-mlx"]
+
+if sys.platform == "darwin":
+    OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b-mlx"]
+else:
+    OLLAMA_MODELS = ["gemma2:9b"]
 
 _DEFAULTS: dict = {"llm_provider": "ollama", "ollama_model": "gemma2:9b", "google_api_key": ""}
 
