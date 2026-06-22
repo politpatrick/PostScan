@@ -22,8 +22,8 @@ from PyQt6.QtWidgets import (
     QLabel, QPushButton, QComboBox, QTabWidget, QFileDialog,
     QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy,
     QMessageBox, QProgressBar, QFrame, QGridLayout, QStatusBar,
-    QGroupBox, QTextEdit, QSplitter, QLineEdit, QCompleter,
-    QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
+    QTextEdit, QSplitter, QLineEdit, QCompleter,
+    QListWidget, QListWidgetItem,
     QDialog, QDialogButtonBox,
 )
 
@@ -603,7 +603,8 @@ class MainTab(QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setSpacing(10)
+        root.setSpacing(8)
+        root.setContentsMargins(16, 16, 16, 16)
 
         # File open row
         top = QHBoxLayout()
@@ -1109,12 +1110,21 @@ class MainTab(QWidget):
 # Settings tab
 # ---------------------------------------------------------------------------
 
+def _style_table(t: QTableWidget) -> QTableWidget:
+    t.setShowGrid(False)
+    t.setAlternatingRowColors(True)
+    t.verticalHeader().setVisible(False)
+    t.horizontalHeader().setHighlightSections(False)
+    t.setStyleSheet("QTableWidget { border: none; }")
+    return t
+
+
 def _make_single_table(header: str) -> QTableWidget:
     t = QTableWidget(0, 1)
     t.setHorizontalHeaderLabels([header])
     t.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
     t.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-    return t
+    return _style_table(t)
 
 
 def _table_values(table: QTableWidget, col: int = 0, selected_only: bool = False) -> list[str]:
@@ -1241,17 +1251,31 @@ class SettingsTab(QWidget):
         root.addWidget(self._vorschlaege_content)
 
     @staticmethod
-    def _grp(title: str, table: QTableWidget, fn_add, fn_del, fn_save) -> QGroupBox:
-        grp = QGroupBox(title)
-        v = QVBoxLayout(grp)
+    def _grp(title: str, table: QTableWidget, fn_add, fn_del, fn_save) -> QWidget:
+        _style_table(table)
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 8)
+        v.setSpacing(4)
+        hdr = QLabel(title.upper())
+        hdr.setFont(_hig_font(11))
+        hdr.setStyleSheet(_HIG_SECONDARY)
+        v.addWidget(hdr)
         v.addWidget(table)
         bar = QHBoxLayout()
         for label, fn in [("＋", fn_add), ("－", fn_del), ("✓ Speichern", fn_save)]:
             b = QPushButton(label)
             b.clicked.connect(fn)
+            if label == "－":
+                b.setStyleSheet(
+                    f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
+                    "border-radius: 5px; padding: 3px 8px; background: transparent; }"
+                    f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
+                )
             bar.addWidget(b)
+        bar.addStretch()
         v.addLayout(bar)
-        return grp
+        return container
 
     def refresh(self):
         v = database.load_vorschlaege()
@@ -1395,33 +1419,58 @@ class KIStatusTab(QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
-        root.setSpacing(10)
+        root.setSpacing(8)
+        root.setContentsMargins(16, 16, 16, 16)
 
         # ── Provider selection ──────────────────────────────────────────────
-        grp_sel = QGroupBox("KI-Anbieter")
-        sel_layout = QHBoxLayout(grp_sel)
-        self._radio_ollama = QRadioButton("Ollama  (lokal, offline)")
-        self._radio_google = QRadioButton("Google GenAI  (Cloud)")
-        self._provider_group = QButtonGroup(self)
-        self._provider_group.addButton(self._radio_ollama, 0)
-        self._provider_group.addButton(self._radio_google, 1)
-        sel_layout.addWidget(self._radio_ollama)
-        sel_layout.addWidget(self._radio_google)
-        sel_layout.addStretch()
+        lbl_prov = QLabel("KI-ANBIETER")
+        lbl_prov.setFont(_hig_font(11))
+        lbl_prov.setStyleSheet(_HIG_SECONDARY)
+        root.addWidget(lbl_prov)
+
+        sel_row = QHBoxLayout()
+        _seg_prov = (
+            "QPushButton {{ border: 1px solid palette(mid); padding: 4px 16px;"
+            "background: palette(button); {radius} }}"
+            "QPushButton:checked {{ background: {accent}; color: white; border-color: {accent}; }}"
+        ).format(accent=_HIG_ACCENT, radius="{radius}")
+        self._btn_ollama = QPushButton("Ollama  (lokal, offline)")
+        self._btn_ollama.setCheckable(True)
+        self._btn_ollama.setStyleSheet(_seg_prov.replace("{radius}",
+            "border-radius: 0; border-top-left-radius: 5px; border-bottom-left-radius: 5px; border-right: none;"))
+        self._btn_google_prov = QPushButton("Google GenAI  (Cloud)")
+        self._btn_google_prov.setCheckable(True)
+        self._btn_google_prov.setStyleSheet(_seg_prov.replace("{radius}",
+            "border-radius: 0; border-top-right-radius: 5px; border-bottom-right-radius: 5px;"))
+        self._btn_ollama.clicked.connect(lambda: self._btn_google_prov.setChecked(False))
+        self._btn_google_prov.clicked.connect(lambda: self._btn_ollama.setChecked(False))
+        if app_config.get_provider() == "google":
+            self._btn_google_prov.setChecked(True)
+        else:
+            self._btn_ollama.setChecked(True)
+        sel_row.addWidget(self._btn_ollama)
+        sel_row.addWidget(self._btn_google_prov)
+        sel_row.addSpacing(8)
         btn_save_provider = QPushButton("Speichern")
         btn_save_provider.clicked.connect(self._save_provider)
-        sel_layout.addWidget(btn_save_provider)
-        root.addWidget(grp_sel)
+        sel_row.addWidget(btn_save_provider)
+        sel_row.addStretch()
+        root.addLayout(sel_row)
 
-        # Restore saved selection
-        if app_config.get_provider() == "google":
-            self._radio_google.setChecked(True)
-        else:
-            self._radio_ollama.setChecked(True)
+        sep1 = QFrame(); sep1.setFrameShape(QFrame.Shape.HLine)
+        sep1.setStyleSheet("color: palette(mid);")
+        root.addWidget(sep1)
 
         # ── Ollama section ──────────────────────────────────────────────────
-        self._grp_ollama = QGroupBox("Ollama – Einrichtung")
+        lbl_ollama_hdr = QLabel("OLLAMA – EINRICHTUNG")
+        lbl_ollama_hdr.setFont(_hig_font(11))
+        lbl_ollama_hdr.setStyleSheet(_HIG_SECONDARY)
+        root.addWidget(lbl_ollama_hdr)
+
+        self._grp_ollama = QWidget()
         v = QVBoxLayout(self._grp_ollama)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
 
         model_row = QHBoxLayout()
         model_row.addWidget(QLabel("Modell:"))
@@ -1470,9 +1519,20 @@ class KIStatusTab(QWidget):
         self._progress.setVisible(False)
         root.addWidget(self._progress)
 
+        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
+        sep2.setStyleSheet("color: palette(mid);")
+        root.addWidget(sep2)
+
         # ── Google GenAI section ────────────────────────────────────────────
-        self._grp_google = QGroupBox("Google GenAI – API-Schlüssel")
+        lbl_google_hdr = QLabel("GOOGLE GENAI – API-SCHLÜSSEL")
+        lbl_google_hdr.setFont(_hig_font(11))
+        lbl_google_hdr.setStyleSheet(_HIG_SECONDARY)
+        root.addWidget(lbl_google_hdr)
+
+        self._grp_google = QWidget()
         gv = QVBoxLayout(self._grp_google)
+        gv.setContentsMargins(0, 0, 0, 0)
+        gv.setSpacing(8)
 
         key_row = QHBoxLayout()
         key_row.addWidget(QLabel("API-Schlüssel:"))
@@ -1504,17 +1564,30 @@ class KIStatusTab(QWidget):
         gv.addLayout(g_bar)
         root.addWidget(self._grp_google)
 
+        sep3 = QFrame(); sep3.setFrameShape(QFrame.Shape.HLine)
+        sep3.setStyleSheet("color: palette(mid);")
+        root.addWidget(sep3)
+
         # ── Shared log ──────────────────────────────────────────────────────
+        lbl_log = QLabel("PROTOKOLL")
+        lbl_log.setFont(_hig_font(11))
+        lbl_log.setStyleSheet(_HIG_SECONDARY)
+        root.addWidget(lbl_log)
+
         self._txt = QTextEdit()
         self._txt.setReadOnly(True)
         self._txt.setMaximumHeight(140)
+        self._txt.setFont(_hig_font(12, mono=True))
+        self._txt.setStyleSheet(
+            "QTextEdit { border: none; background: palette(base); border-radius: 6px; }"
+        )
         root.addWidget(self._txt)
         root.addStretch()
 
     # ── Provider save ───────────────────────────────────────────────────────
 
     def _save_provider(self):
-        provider = "google" if self._radio_google.isChecked() else "ollama"
+        provider = "google" if self._btn_google_prov.isChecked() else "ollama"
         cfg = app_config.load()
         cfg["llm_provider"] = provider
         app_config.save(cfg)
@@ -1788,6 +1861,8 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self._splitter)
 
         self._status_bar = QStatusBar()
+        self._status_bar.setFont(_hig_font(11))
+        self._status_bar.setStyleSheet(f"QStatusBar {{ {_HIG_SECONDARY} }}")
         self._status_bar.showMessage("PostScan bereit – PDFs in der Warteschlange ablegen")
         self.setStatusBar(self._status_bar)
         self.main_tab.status_message.connect(self._status_bar.showMessage)
