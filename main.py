@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QProgressBar, QFrame, QGridLayout, QStatusBar,
     QGroupBox, QTextEdit, QSplitter, QLineEdit, QCompleter,
     QListWidget, QListWidgetItem, QRadioButton, QButtonGroup,
+    QDialog, QDialogButtonBox,
 )
 
 import config as app_config
@@ -435,6 +436,75 @@ def _set_file_tags(path: str, tags: list[str]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Inline-Edit Dialog for Abkürzung / Synonyme
+# ---------------------------------------------------------------------------
+
+class _EditStammdatenDialog(QDialog):
+    def __init__(self, kind: str, name: str, parent=None):
+        super().__init__(parent)
+        self.kind = kind
+        self.name = name
+        self.setWindowTitle(f"{'Dokumenttyp' if kind == 'typ' else 'Absender'} bearbeiten")
+        self.setMinimumWidth(360)
+
+        layout = QVBoxLayout(self)
+        form = QGridLayout()
+
+        form.addWidget(QLabel("Name:"), 0, 0)
+        lbl_name = QLabel(name)
+        lbl_name.setStyleSheet("font-weight: bold;")
+        form.addWidget(lbl_name, 0, 1)
+
+        form.addWidget(QLabel("Abkürzung:"), 1, 0)
+        self.le_abk = QLineEdit()
+        form.addWidget(self.le_abk, 1, 1)
+
+        form.addWidget(QLabel("Synonyme:"), 2, 0)
+        self.le_syn = QLineEdit()
+        self.le_syn.setPlaceholderText("kommagetrennt, z.B. AOK, AOK Bayern")
+        form.addWidget(self.le_syn, 2, 1)
+
+        layout.addLayout(form)
+
+        btns = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                QDialogButtonBox.StandardButton.Cancel)
+        btns.accepted.connect(self.accept)
+        btns.rejected.connect(self.reject)
+        layout.addWidget(btns)
+
+        self._load(kind, name)
+
+    def _load(self, kind: str, name: str):
+        if kind == "typ":
+            items = database.load_dokumenttypen()
+        else:
+            items = database.load_absender()
+        for item in items:
+            if item["name"] == name:
+                self.le_abk.setText(item.get("abk", ""))
+                self.le_syn.setText(", ".join(item.get("synonyme", [])))
+                return
+
+    def save(self):
+        abk  = self.le_abk.text().strip()
+        syns = [s.strip() for s in self.le_syn.text().split(",") if s.strip()]
+        if self.kind == "typ":
+            items = database.load_dokumenttypen()
+            for item in items:
+                if item["name"] == self.name:
+                    item["abk"] = abk
+                    item["synonyme"] = syns
+            database.save_dokumenttypen(items)
+        else:
+            items = database.load_absender()
+            for item in items:
+                if item["name"] == self.name:
+                    item["abk"] = abk
+                    item["synonyme"] = syns
+            database.save_absender(items)
+
+
+# ---------------------------------------------------------------------------
 # Drop zone widget
 # ---------------------------------------------------------------------------
 
@@ -577,15 +647,33 @@ class MainTab(QWidget):
         )
         self.cb_person.lineEdit().setCompleter(self._person_completer)
 
-        for row, (lbl, widget) in enumerate([
-            ("Dokumenttyp:", self.cb_typ),
-            ("Zusatzinformationen:", self.le_zusatz),
-            ("Absender:", self.cb_absender),
-            ("Dokumentdatum:", self.cb_datum),
-            ("Personenbezug:", self.cb_person),
+        def _edit_btn(kind: str) -> QPushButton:
+            b = QPushButton("✏")
+            b.setFixedWidth(28)
+            b.setToolTip(f"{kind} bearbeiten (Abkürzung / Synonyme)")
+            b.clicked.connect(lambda: self._open_edit_dialog(kind))
+            return b
+
+        self._btn_edit_typ = _edit_btn("typ")
+        self._btn_edit_ab  = _edit_btn("absender")
+
+        for row, (lbl, widget, extra) in enumerate([
+            ("Dokumenttyp:",        self.cb_typ,      self._btn_edit_typ),
+            ("Zusatzinformationen:", self.le_zusatz,   None),
+            ("Absender:",           self.cb_absender,  self._btn_edit_ab),
+            ("Dokumentdatum:",      self.cb_datum,     None),
+            ("Personenbezug:",      self.cb_person,    None),
         ]):
             grid.addWidget(QLabel(lbl), row, 0)
-            grid.addWidget(widget, row, 1)
+            if extra:
+                row_w = QWidget()
+                row_l = QHBoxLayout(row_w)
+                row_l.setContentsMargins(0, 0, 0, 0)
+                row_l.addWidget(widget)
+                row_l.addWidget(extra)
+                grid.addWidget(row_w, row, 1)
+            else:
+                grid.addWidget(widget, row, 1)
 
         top_layout.addLayout(grid)
 
@@ -852,6 +940,17 @@ class MainTab(QWidget):
             self._update_preview()
         elif options and options[0] != raw:
             self.cb_datum.setCurrentText(options[0])
+
+    def _open_edit_dialog(self, kind: str):
+        name = (self.cb_typ if kind == "typ" else self.cb_absender).currentText().strip()
+        if not name:
+            QMessageBox.information(self, "Kein Eintrag", "Bitte zuerst einen Eintrag auswählen.")
+            return
+        dlg = _EditStammdatenDialog(kind, name, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            dlg.save()
+            self._populate_combos()
+            self._update_preview()
 
     def _toggle_prefix(self, label: str):
         if self._prefix == label:
