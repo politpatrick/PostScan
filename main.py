@@ -235,7 +235,7 @@ class ConfirmWorker(QThread):
     result_ready = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str = ""):
+    def __init__(self, pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str = "", prefix: str = ""):
         super().__init__()
         self.pdf_path = pdf_path
         self.typ = typ
@@ -243,6 +243,7 @@ class ConfirmWorker(QThread):
         self.dat = dat
         self.per = per
         self.zusatz = zusatz
+        self.prefix = prefix
 
     def run(self):
         try:
@@ -260,7 +261,11 @@ class ConfirmWorker(QThread):
             # c) Rename in-place (keep file at its original location)
             typ_display = database.get_dokumenttyp_display(self.typ)
             ab_display  = database.get_absender_display(self.ab)
-            parts = [p.replace(" ", "_") for p in [typ_display, self.zusatz, ab_display, dat_v, self.per] if p]
+            if self.prefix == "an":
+                ordered = [self.prefix, ab_display, typ_display, self.zusatz, dat_v, self.per]
+            else:
+                ordered = [self.prefix, typ_display, self.zusatz, ab_display, dat_v, self.per]
+            parts = [p.replace(" ", "_") for p in ordered if p]
             new_name = "_".join(parts) + ".pdf"
             base, ext = os.path.splitext(new_name)
             orig_dir = os.path.dirname(self.pdf_path)
@@ -500,6 +505,7 @@ class MainTab(QWidget):
         self.pdf_path: str = ""
         self._analyze_worker: AnalyzeWorker | None = None
         self._confirm_worker: ConfirmWorker | None = None
+        self._prefix: str = ""
         self._build_ui()
 
     def _build_ui(self):
@@ -600,6 +606,20 @@ class MainTab(QWidget):
         self.cb_datum.lineEdit().editingFinished.connect(self._auto_format_datum)
         self.cb_datum.lineEdit().returnPressed.connect(self._auto_format_datum)
 
+        # Prefix toggle buttons
+        prefix_layout = QHBoxLayout()
+        prefix_layout.addWidget(QLabel("Präfix:"))
+        self._prefix_btns: dict[str, QPushButton] = {}
+        for label in ("RE", "E-Mail", "an"):
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedWidth(64)
+            btn.clicked.connect(lambda checked, l=label: self._toggle_prefix(l))
+            prefix_layout.addWidget(btn)
+            self._prefix_btns[label] = btn
+        prefix_layout.addStretch()
+        top_layout.addLayout(prefix_layout)
+
         # Confirm button
         self.btn_confirm = QPushButton("Bestätigen & Archivieren")
         self.btn_confirm.setEnabled(False)
@@ -667,6 +687,9 @@ class MainTab(QWidget):
         self.le_zusatz.clear()
         self.lbl_preview.setText("—")
         self.txt_ocr.clear()
+        if self._prefix:
+            self._prefix_btns[self._prefix].setChecked(False)
+            self._prefix = ""
 
     def _populate_combos(self):
         persons = database.get_persons()
@@ -830,14 +853,32 @@ class MainTab(QWidget):
         elif options and options[0] != raw:
             self.cb_datum.setCurrentText(options[0])
 
-    def _update_preview(self):
+    def _toggle_prefix(self, label: str):
+        if self._prefix == label:
+            self._prefix = ""
+            self._prefix_btns[label].setChecked(False)
+        else:
+            if self._prefix:
+                self._prefix_btns[self._prefix].setChecked(False)
+            self._prefix = label
+            self._prefix_btns[label].setChecked(True)
+        self._update_preview()
+
+    def _build_parts(self) -> list[str]:
         typ    = database.get_dokumenttyp_display(self.cb_typ.currentText().strip())
         zusatz = self.le_zusatz.text().strip()
         ab     = database.get_absender_display(self.cb_absender.currentText().strip())
         dat    = self.cb_datum.currentText().strip()
         dat    = f"v{dat}" if dat and not dat.startswith("v") else dat
         per    = self.cb_person.currentText().strip()
-        parts = [p.replace(" ", "_") for p in [typ, zusatz, ab, dat, per] if p]
+        if self._prefix == "an":
+            ordered = [self._prefix, ab, typ, zusatz, dat, per]
+        else:
+            ordered = [self._prefix, typ, zusatz, ab, dat, per]
+        return [p.replace(" ", "_") for p in ordered if p]
+
+    def _update_preview(self):
+        parts = self._build_parts()
         self.lbl_preview.setText("_".join(parts) + ".pdf" if parts else "—")
 
     def _confirm(self):
@@ -861,7 +902,7 @@ class MainTab(QWidget):
         self.progress.setVisible(True)
 
         self.status_message.emit("Schreibe Metadaten & archiviere …")
-        self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per, zusatz)
+        self._confirm_worker = ConfirmWorker(self.pdf_path, typ, ab, dat, per, zusatz, self._prefix)
         self._confirm_worker.result_ready.connect(self._on_confirm_done)
         self._confirm_worker.error.connect(self._on_confirm_error)
         self._confirm_worker.finished.connect(self._confirm_worker.deleteLater)
