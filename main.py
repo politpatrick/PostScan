@@ -1903,10 +1903,14 @@ class MainWindow(QMainWindow):
         geom = s.value("windowGeometry")
         if geom:
             self.restoreGeometry(geom)
+        sizes = s.value("splitterSizes")
+        if sizes:
+            self._splitter.setSizes([int(v) for v in sizes])
 
     def closeEvent(self, event):
         s = QSettings("de.pkunze", "PostScan")
         s.setValue("windowGeometry", self.saveGeometry())
+        s.setValue("splitterSizes", self._splitter.sizes())
         super().closeEvent(event)
 
     def _build_menu(self):
