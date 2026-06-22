@@ -87,13 +87,13 @@ _INPUT_STYLE = (
 
 _TEXTEDIT_STYLE = (
     f"QTextEdit {{ border: 1px solid palette(mid); border-radius: 6px;"
-    "padding: 4px; background: palette(base); }}"
+    "padding: 4px; background: palette(base); }"
     f"QTextEdit:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
 )
 
 _COMBO_STYLE = (
     f"QComboBox {{ border: 1px solid palette(mid); border-radius: 5px;"
-    "background: palette(base); padding: 0px; }}"
+    "background: palette(base); padding: 0px; }"
     f"QComboBox:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
     "QComboBox:disabled { background: palette(window); color: palette(placeholderText); }"
     "QComboBox::drop-down { border: none; width: 20px; }"
@@ -102,7 +102,7 @@ _COMBO_STYLE = (
 
 _COMBO_ERROR_STYLE = (
     f"QComboBox {{ border: 2px solid {_HIG_RED}; border-radius: 5px;"
-    "background: palette(base); padding: 0px; }}"
+    "background: palette(base); padding: 0px; }"
     f"QComboBox:focus {{ border-color: {_HIG_RED}; outline: none; }}"
     "QComboBox::drop-down { border: none; width: 20px; }"
     "QComboBox QLineEdit { border: none; background: transparent; padding: 3px 7px; }"
@@ -659,6 +659,8 @@ class MainTab(QWidget):
         self._analyze_worker: AnalyzeWorker | None = None
         self._confirm_worker: ConfirmWorker | None = None
         self._prefix: str = ""
+        self._stacked: "QStackedWidget | None" = None
+        self._drag_overlay: "QFrame | None" = None
         self._build_ui()
 
     def _build_ui(self):
@@ -920,7 +922,7 @@ class MainTab(QWidget):
         self._drag_overlay = QFrame(self)
         self._drag_overlay.setStyleSheet(
             f"QFrame {{ border: 3px solid {_HIG_ACCENT}; border-radius: 10px;"
-            "background: rgba(0, 122, 255, 18); }}"
+            "background: rgba(0, 122, 255, 18); }"
         )
         _ov_lbl = QLabel("PDF hier ablegen", self._drag_overlay)
         _ov_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -972,10 +974,12 @@ class MainTab(QWidget):
     # ------------------------------------------------------------------
 
     def _show_empty(self):
-        self._stacked.setCurrentIndex(0)
+        if self._stacked:
+            self._stacked.setCurrentIndex(0)
 
     def _show_content(self):
-        self._stacked.setCurrentIndex(1)
+        if self._stacked:
+            self._stacked.setCurrentIndex(1)
 
     def _set_combo_error(self, combo: "QComboBox", error: bool):
         combo.setStyleSheet(_COMBO_ERROR_STYLE if error else _COMBO_STYLE)
@@ -1008,7 +1012,7 @@ class MainTab(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        if self._drag_overlay.isVisible():
+        if self._drag_overlay and self._drag_overlay.isVisible():
             self._drag_overlay.setGeometry(self.rect())
 
     def _open_pdf(self):
@@ -1315,12 +1319,12 @@ class MainTab(QWidget):
     def reset(self):
         """Unload current document without archiving."""
         for worker in (self._analyze_worker, self._confirm_worker):
-            if worker and worker.isRunning():
-                try:
+            try:
+                if worker and worker.isRunning():
                     worker.result_ready.disconnect()
                     worker.error.disconnect()
-                except Exception:
-                    pass
+            except RuntimeError:
+                pass
         self._analyze_worker = None
         self._confirm_worker = None
         self.progress.setVisible(False)
@@ -2439,7 +2443,7 @@ class MainWindow(QMainWindow):
         self._refresh_queue_list()
 
     def _clear_queue(self):
-        for w in self._pre_workers.values():
+        for w in list(self._pre_workers.values()):
             try:
                 w.result_ready.disconnect()
                 w.error.disconnect()
