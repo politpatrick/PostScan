@@ -13,7 +13,7 @@ _MACOS = sys.platform == "darwin"
 if _MACOS:
     import plistlib
     import xattr
-from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel, QUrl
+from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel, QUrl, QSettings
 from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor, QAction, QKeySequence, QFontDatabase
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
@@ -59,6 +59,19 @@ _TOGGLE_STYLE = (
     "background: palette(button); border: 1px solid palette(mid); "
     "border-radius: 4px; }"
     "QPushButton:checked { background: palette(mid); }"
+)
+
+_DESTRUCTIVE_BTN = (
+    f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
+    "border-radius: 5px; padding: 3px 8px; background: transparent; }"
+    f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
+)
+
+_BORDERLESS_BTN = (
+    "QPushButton { border: none; background: transparent; padding: 2px 6px;"
+    "color: palette(placeholderText); border-radius: 4px; }"
+    "QPushButton:hover { color: palette(windowText); background: palette(mid); }"
+    "QPushButton:checked { color: palette(windowText); }"
 )
 
 EINGANG_DIR = os.path.join(os.path.dirname(__file__), "eingang")
@@ -681,6 +694,7 @@ class MainTab(QWidget):
             b = QPushButton("✏")
             b.setFixedWidth(28)
             b.setToolTip(f"{kind} bearbeiten (Abkürzung / Synonyme)")
+            b.setStyleSheet(_BORDERLESS_BTN)
             b.clicked.connect(lambda: self._open_edit_dialog(kind))
             return b
 
@@ -1215,6 +1229,7 @@ class SettingsTab(QWidget):
         bar_k = QHBoxLayout()
         btn_k_add = QPushButton("Hinzufügen")
         btn_k_del = QPushButton("Löschen")
+        btn_k_del.setStyleSheet(_DESTRUCTIVE_BTN)
         btn_k_save = QPushButton("Speichern")
         btn_k_add.clicked.connect(self._add_kombi)
         btn_k_del.clicked.connect(self._del_kombi)
@@ -1249,6 +1264,7 @@ class SettingsTab(QWidget):
         bar_v = QHBoxLayout()
         btn_v_acc = QPushButton("Übernehmen")
         btn_v_rej = QPushButton("Ablehnen")
+        btn_v_rej.setStyleSheet(_DESTRUCTIVE_BTN)
         btn_v_acc.clicked.connect(self._accept_vorschlag)
         btn_v_rej.clicked.connect(self._reject_vorschlag)
         bar_v.addWidget(btn_v_acc)
@@ -1274,11 +1290,7 @@ class SettingsTab(QWidget):
             b = QPushButton(label)
             b.clicked.connect(fn)
             if label == "－":
-                b.setStyleSheet(
-                    f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
-                    "border-radius: 5px; padding: 3px 8px; background: transparent; }"
-                    f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
-                )
+                b.setStyleSheet(_DESTRUCTIVE_BTN)
             bar.addWidget(b)
         bar.addStretch()
         v.addLayout(bar)
@@ -1550,6 +1562,7 @@ class KIStatusTab(QWidget):
         key_row.addWidget(self._le_apikey)
         btn_show = QPushButton("Anzeigen")
         btn_show.setCheckable(True)
+        btn_show.setStyleSheet(_BORDERLESS_BTN)
         btn_show.toggled.connect(
             lambda on: self._le_apikey.setEchoMode(
                 QLineEdit.EchoMode.Normal if on else QLineEdit.EchoMode.Password
@@ -1840,11 +1853,7 @@ class MainWindow(QMainWindow):
         qp_layout.addWidget(self._lst_queue, stretch=1)
 
         self._btn_clear = QPushButton("Leeren")
-        self._btn_clear.setStyleSheet(
-            f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
-            "border-radius: 5px; padding: 3px 8px; background: transparent; }"
-            f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
-        )
+        self._btn_clear.setStyleSheet(_DESTRUCTIVE_BTN)
         self._btn_clear.clicked.connect(self._clear_queue)
         qp_layout.addWidget(self._btn_clear)
 
@@ -1878,6 +1887,18 @@ class MainWindow(QMainWindow):
         self.main_tab.pdf_opened.connect(self._show_pdf)
 
         self._build_menu()
+        self._restore_geometry()
+
+    def _restore_geometry(self):
+        s = QSettings("de.pkunze", "PostScan")
+        geom = s.value("windowGeometry")
+        if geom:
+            self.restoreGeometry(geom)
+
+    def closeEvent(self, event):
+        s = QSettings("de.pkunze", "PostScan")
+        s.setValue("windowGeometry", self.saveGeometry())
+        super().closeEvent(event)
 
     def _build_menu(self):
         mb = self.menuBar()
