@@ -1645,6 +1645,7 @@ class MainWindow(QMainWindow):
         self._tabs.addTab(self.main_tab, "Dokument")
         self._tabs.addTab(self.settings_tab, "Stammdaten")
         self._tabs.addTab(self.ki_tab, "KI-Einrichtung")
+        self._tabs.currentChanged.connect(self._on_tab_changed)
 
         # Toggle buttons as corner widgets on the tab bar
         self._queue_last_size = 180
@@ -1735,6 +1736,32 @@ class MainWindow(QMainWindow):
         total = self._splitter.width()
         if total > 0:
             self._pdf_view.setMaximumWidth(int(total * 0.4))
+
+    def _on_tab_changed(self, index: int):
+        is_main = index == 0
+        if not is_main:
+            # Einklappen: Größen merken, Panels verstecken
+            sizes = self._splitter.sizes()
+            if self._queue_panel.isVisible():
+                self._queue_last_size = sizes[0]
+            if self._pdf_view.isVisible():
+                self._pdf_last_size = sizes[2]
+            self._queue_panel.setVisible(False)
+            self._pdf_view.setVisible(False)
+            self._btn_toggle_queue.setChecked(False)
+            self._btn_toggle_pdf.setChecked(False)
+        else:
+            # Aufklappen: gespeicherte Größen wiederherstellen
+            self._queue_panel.setVisible(True)
+            self._pdf_view.setVisible(True)
+            self._pdf_view.setMaximumWidth(16777215)
+            sizes = self._splitter.sizes()
+            sizes[0] = self._queue_last_size or 180
+            sizes[2] = self._pdf_last_size or 600
+            self._splitter.setSizes(sizes)
+            self._btn_toggle_queue.setChecked(True)
+            self._btn_toggle_pdf.setChecked(True)
+            QTimer.singleShot(0, self._clamp_pdf_width)
 
     def _toggle_queue(self):
         if self._queue_panel.isVisible():
