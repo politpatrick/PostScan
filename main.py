@@ -810,6 +810,30 @@ class MainTab(QWidget):
         splitter.setSizes([320, 200])
         root.addWidget(splitter)
 
+        # ── VoiceOver-Beschriftungen ────────────────────────────────────
+        self.btn_open.setAccessibleName("PDF öffnen")
+        self.btn_open.setAccessibleDescription("Öffnet einen Dateidialog zur Auswahl einer PDF-Datei")
+        self.progress.setAccessibleName("Fortschrittsanzeige")
+        self.cb_typ.setAccessibleName("Dokumenttyp")
+        self.cb_typ.setAccessibleDescription("Wählen oder eingeben des Dokumenttyps")
+        self.le_zusatz.setAccessibleName("Zusatzinformation")
+        self.cb_absender.setAccessibleName("Absender")
+        self.cb_absender.setAccessibleDescription("Wählen oder eingeben des Absenders")
+        self.cb_datum.setAccessibleName("Dokumentdatum")
+        self.cb_datum.setAccessibleDescription("Datum im Format TT.MM.JJ")
+        self.cb_person.setAccessibleName("Personenbezug")
+        self._btn_edit_typ.setAccessibleName("Dokumenttyp bearbeiten")
+        self._btn_edit_typ.setAccessibleDescription("Öffnet Dialog für Abkürzung und Synonyme des Dokumenttyps")
+        self._btn_edit_ab.setAccessibleName("Absender bearbeiten")
+        self._btn_edit_ab.setAccessibleDescription("Öffnet Dialog für Abkürzung und Synonyme des Absenders")
+        self.lbl_preview.setAccessibleName("Dateiname-Vorschau")
+        self._prefix_btns["RE"].setAccessibleName("Präfix Rechnung")
+        self._prefix_btns["E-Mail"].setAccessibleName("Präfix E-Mail")
+        self._prefix_btns["an"].setAccessibleName("Präfix an – ändert Dateinamen-Reihenfolge")
+        self.btn_confirm.setAccessibleName("Bestätigen und Archivieren")
+        self.btn_confirm.setAccessibleDescription("Speichert und archiviert das Dokument mit dem angezeigten Dateinamen")
+        self.txt_ocr.setAccessibleName("Extrahierter Text und Klassifikation")
+
     # ------------------------------------------------------------------
 
     def _open_pdf(self):
@@ -1183,6 +1207,7 @@ class SettingsTab(QWidget):
         self.tbl_typen.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_typen.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.tbl_typen.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tbl_typen.setAccessibleName("Dokumenttypen-Tabelle")
         grp_t = self._grp("Dokumenttypen", self.tbl_typen,
                           self._add_typ, self._del_typ, self._save_typen)
 
@@ -1192,6 +1217,7 @@ class SettingsTab(QWidget):
         self.tbl_abs.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.tbl_abs.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.tbl_abs.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.tbl_abs.setAccessibleName("Absender-Tabelle")
         grp_a = self._grp("Absender", self.tbl_abs,
                           self._add_abs, self._del_abs, self._save_abs)
 
@@ -1200,6 +1226,7 @@ class SettingsTab(QWidget):
         left_col.addWidget(grp_a)
 
         self.tbl_pers = _make_single_table("Nachname")
+        self.tbl_pers.setAccessibleName("Personen-Tabelle")
         grp_p = self._grp("Personen", self.tbl_pers,
                           self._add_pers, self._del_pers, self._save_pers)
         grp_p.setMaximumWidth(200)
@@ -1607,6 +1634,22 @@ class KIStatusTab(QWidget):
         root.addWidget(self._txt)
         root.addStretch()
 
+        # ── VoiceOver-Beschriftungen ────────────────────────────────────
+        self._btn_ollama.setAccessibleName("KI-Anbieter Ollama – lokal und offline")
+        self._btn_google_prov.setAccessibleName("KI-Anbieter Google GenAI – Cloud")
+        self._cb_ollama_model.setAccessibleName("Ollama-Modell auswählen")
+        self._lbl_installed.setAccessibleName("Status Ollama installiert")
+        self._lbl_running.setAccessibleName("Status Ollama läuft")
+        self._lbl_model.setAccessibleName("Status Modell verfügbar")
+        self._btn_check.setAccessibleName("Ollama-Status prüfen")
+        self._btn_fix.setAccessibleName("Ollama einrichten")
+        self._btn_fix.setAccessibleDescription("Startet Ollama oder lädt das Modell herunter")
+        self._le_apikey.setAccessibleName("Google GenAI API-Schlüssel")
+        self._le_apikey.setAccessibleDescription("Geheimschlüssel für die Google GenAI API")
+        self._btn_test_google.setAccessibleName("Google-Verbindung testen")
+        self._lbl_google_status.setAccessibleName("Google-Verbindungsstatus")
+        self._txt.setAccessibleName("KI-Einrichtungs-Protokoll")
+
     # ── Provider save ───────────────────────────────────────────────────────
 
     def _save_provider(self):
@@ -1814,6 +1857,7 @@ class MainWindow(QMainWindow):
         self._btn_toggle_queue.setFixedHeight(24)
         self._btn_toggle_queue.setFont(_hig_font(11))
         self._btn_toggle_queue.setStyleSheet(_corner_style)
+        self._btn_toggle_queue.setAccessibleName("Ablage ein- und ausblenden")
         self._btn_toggle_queue.clicked.connect(self._toggle_queue)
         self._tabs.setCornerWidget(self._btn_toggle_queue, Qt.Corner.TopLeftCorner)
 
@@ -1823,6 +1867,7 @@ class MainWindow(QMainWindow):
         self._btn_toggle_pdf.setFixedHeight(24)
         self._btn_toggle_pdf.setFont(_hig_font(11))
         self._btn_toggle_pdf.setStyleSheet(_corner_style)
+        self._btn_toggle_pdf.setAccessibleName("PDF-Vorschau ein- und ausblenden")
         self._btn_toggle_pdf.clicked.connect(self._toggle_pdf)
         self._tabs.setCornerWidget(self._btn_toggle_pdf, Qt.Corner.TopRightCorner)
 
@@ -1860,8 +1905,15 @@ class MainWindow(QMainWindow):
 
         self._btn_clear = QPushButton("Leeren")
         self._btn_clear.setStyleSheet(_DESTRUCTIVE_BTN)
+        self._btn_clear.setAccessibleName("Warteschlange leeren")
+        self._btn_clear.setAccessibleDescription("Entfernt alle Dokumente aus der Warteschlange")
         self._btn_clear.clicked.connect(self._clear_queue)
         qp_layout.addWidget(self._btn_clear)
+
+        self._drop_zone.setAccessibleName("Ablage")
+        self._drop_zone.setAccessibleDescription("PDF-Dateien hier ablegen oder Schaltfläche 'PDF öffnen' verwenden")
+        self._lst_queue.setAccessibleName("Warteschlange")
+        self._lst_queue.setAccessibleDescription("Liste der zu verarbeitenden Dokumente")
 
         # ── Right panel: PDF viewer ─────────────────────────────────────
         self._pdf_doc = QPdfDocument(self)
