@@ -1,16 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
-import sys
-from pathlib import Path
 
 block_cipher = None
 
 a = Analysis(
-    ['../main.py'],
-    pathex=[str(Path('../').resolve())],
+    ['main.py'],
+    pathex=['.'],
     binaries=[],
     datas=[
-        ('../stammdaten.json', '.'),
-        ('../icon.png', '.'),
+        ('stammdaten.json', '.'),
+        ('icon.png', '.'),
     ],
     hiddenimports=[
         'PyQt6.QtWebEngineWidgets',
@@ -45,7 +43,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
-    icon='../icon.png',
+    icon='icon.png',
 )
 
 coll = COLLECT(
