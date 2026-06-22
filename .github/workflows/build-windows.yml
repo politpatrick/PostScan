@@ -2,7 +2,8 @@ name: Build Windows Installer
 
 on:
   push:
-    branches: [windows]
+    tags:
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -41,9 +42,9 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer.iss
 
-      - name: Upload installer artifact
-        uses: actions/upload-artifact@v4
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: PostScan-Windows-Installer
-          path: windows/PostScan-Setup.exe
-          retention-days: 30
+          files: windows/PostScan-Setup.exe
+          generate_release_notes: false
+          body: "Windows-Installer für PostScan"
