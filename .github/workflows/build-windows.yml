@@ -1,0 +1,49 @@
+name: Build Windows Installer
+
+on:
+  push:
+    branches: [windows]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ghostscript (required by ocrmypdf)
+        run: |
+          choco install ghostscript -y
+          echo "C:\Program Files\gs\gs10.03.1\bin" >> $env:GITHUB_PATH
+
+      - name: Install Tesseract OCR
+        run: |
+          choco install tesseract -y
+          echo "C:\Program Files\Tesseract-OCR" >> $env:GITHUB_PATH
+
+      - name: Install Python dependencies
+        run: pip install -r windows/requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller windows/PostScan.spec
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer.iss
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PostScan-Windows-Installer
+          path: windows/PostScan-Setup.exe
+          retention-days: 30

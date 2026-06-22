@@ -1,5 +1,4 @@
 import os
-import plistlib
 import re
 import shutil
 import subprocess
@@ -9,7 +8,11 @@ from datetime import date as _today_date
 import requests
 
 import pikepdf
-import xattr
+
+_MACOS = sys.platform == "darwin"
+if _MACOS:
+    import plistlib
+    import xattr
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel, QUrl
 from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor
 from PyQt6.QtPdf import QPdfDocument
@@ -399,6 +402,8 @@ def _write_xmp(pdf_path: str, typ: str, ab: str, dat: str, per: str, zusatz: str
 
 
 def _set_macos_tags(path: str, tags: list[str]) -> None:
+    if not _MACOS:
+        return
     plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
     xattr.setxattr(path, "com.apple.metadata:_kMDItemUserTags", plist_bytes)
 
