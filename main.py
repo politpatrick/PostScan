@@ -14,7 +14,7 @@ if _MACOS:
     import plistlib
     import xattr
 from PyQt6.QtCore import QThread, pyqtSignal, Qt, QTimer, QStringListModel, QUrl
-from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor
+from PyQt6.QtGui import QIcon, QStandardItemModel, QStandardItem, QColor, QAction, QKeySequence, QFontDatabase
 from PyQt6.QtPdf import QPdfDocument
 from PyQt6.QtPdfWidgets import QPdfView
 from PyQt6.QtWidgets import (
@@ -37,7 +37,13 @@ import pipeline
 
 def _hig_font(size: int, bold: bool = False, mono: bool = False) -> "QFont":
     from PyQt6.QtGui import QFont
-    f = QFont("SF Mono" if mono else ".AppleSystemUIFont")
+    if mono:
+        families = QFontDatabase.families()
+        family = "SF Mono" if "SF Mono" in families else QFontDatabase.systemFont(
+            QFontDatabase.SystemFont.FixedFont).family()
+    else:
+        family = ".AppleSystemUIFont"
+    f = QFont(family)
     f.setPointSize(size)
     if bold:
         f.setWeight(QFont.Weight.DemiBold)
@@ -470,6 +476,7 @@ class _EditStammdatenDialog(QDialog):
         self.name = name
         self.setWindowTitle(f"{'Dokumenttyp' if kind == 'typ' else 'Absender'} bearbeiten")
         self.setMinimumWidth(360)
+        self.setWindowModality(Qt.WindowModality.WindowModal)
 
         layout = QVBoxLayout(self)
         form = QGridLayout()
@@ -1869,6 +1876,127 @@ class MainWindow(QMainWindow):
         self.main_tab.confirmed.connect(self._on_confirmed)
         self.main_tab.result_ready.connect(self._on_result_ready)
         self.main_tab.pdf_opened.connect(self._show_pdf)
+
+        self._build_menu()
+
+    def _build_menu(self):
+        mb = self.menuBar()
+
+        # ── Ablage (File) ───────────────────────────────────────────────────
+        menu_file = mb.addMenu("Ablage")
+
+        act_open = QAction("Öffnen …", self)
+        act_open.setShortcut(QKeySequence.StandardKey.Open)
+        act_open.triggered.connect(self.main_tab._open_pdf)
+        menu_file.addAction(act_open)
+
+        menu_file.addSeparator()
+
+        act_quit = QAction("PostScan beenden", self)
+        act_quit.setShortcut(QKeySequence.StandardKey.Quit)
+        act_quit.triggered.connect(QApplication.instance().quit)
+        menu_file.addAction(act_quit)
+
+        # ── Bearbeiten (Edit) ───────────────────────────────────────────────
+        menu_edit = mb.addMenu("Bearbeiten")
+
+        act_undo = QAction("Rückgängig", self)
+        act_undo.setShortcut(QKeySequence.StandardKey.Undo)
+        act_undo.setEnabled(False)
+        menu_edit.addAction(act_undo)
+
+        act_redo = QAction("Wiederholen", self)
+        act_redo.setShortcut(QKeySequence.StandardKey.Redo)
+        act_redo.setEnabled(False)
+        menu_edit.addAction(act_redo)
+
+        menu_edit.addSeparator()
+
+        act_cut = QAction("Ausschneiden", self)
+        act_cut.setShortcut(QKeySequence.StandardKey.Cut)
+        act_cut.triggered.connect(lambda: (
+            w.cut() if hasattr(w := QApplication.focusWidget(), "cut") else None
+        ))
+        menu_edit.addAction(act_cut)
+
+        act_copy = QAction("Kopieren", self)
+        act_copy.setShortcut(QKeySequence.StandardKey.Copy)
+        act_copy.triggered.connect(lambda: (
+            w.copy() if hasattr(w := QApplication.focusWidget(), "copy") else None
+        ))
+        menu_edit.addAction(act_copy)
+
+        act_paste = QAction("Einsetzen", self)
+        act_paste.setShortcut(QKeySequence.StandardKey.Paste)
+        act_paste.triggered.connect(lambda: (
+            w.paste() if hasattr(w := QApplication.focusWidget(), "paste") else None
+        ))
+        menu_edit.addAction(act_paste)
+
+        act_selall = QAction("Alles auswählen", self)
+        act_selall.setShortcut(QKeySequence.StandardKey.SelectAll)
+        act_selall.triggered.connect(lambda: (
+            w.selectAll() if hasattr(w := QApplication.focusWidget(), "selectAll") else None
+        ))
+        menu_edit.addAction(act_selall)
+
+        # ── Darstellung (View) ──────────────────────────────────────────────
+        menu_view = mb.addMenu("Darstellung")
+
+        act_queue = QAction("Warteschlange", self)
+        act_queue.setCheckable(True)
+        act_queue.setChecked(True)
+        act_queue.setShortcut(QKeySequence("Ctrl+1"))
+        act_queue.toggled.connect(self._btn_toggle_queue.setChecked)
+        act_queue.toggled.connect(lambda _: self._toggle_queue())
+        self._btn_toggle_queue.toggled.connect(act_queue.setChecked)
+        menu_view.addAction(act_queue)
+
+        act_pdf = QAction("PDF-Vorschau", self)
+        act_pdf.setCheckable(True)
+        act_pdf.setChecked(True)
+        act_pdf.setShortcut(QKeySequence("Ctrl+2"))
+        act_pdf.toggled.connect(self._btn_toggle_pdf.setChecked)
+        act_pdf.toggled.connect(lambda _: self._toggle_pdf())
+        self._btn_toggle_pdf.toggled.connect(act_pdf.setChecked)
+        menu_view.addAction(act_pdf)
+
+        # ── Einstellungen ───────────────────────────────────────────────────
+        menu_prefs = mb.addMenu("Einstellungen")
+
+        act_prefs = QAction("Stammdaten …", self)
+        act_prefs.setShortcut(QKeySequence("Ctrl+,"))
+        act_prefs.triggered.connect(lambda: self._tabs.setCurrentIndex(1))
+        menu_prefs.addAction(act_prefs)
+
+        act_ki = QAction("KI-Einrichtung …", self)
+        act_ki.triggered.connect(lambda: self._tabs.setCurrentIndex(2))
+        menu_prefs.addAction(act_ki)
+
+        # ── Fenster (Window) ────────────────────────────────────────────────
+        menu_win = mb.addMenu("Fenster")
+
+        act_min = QAction("Minimieren", self)
+        act_min.setShortcut(QKeySequence("Ctrl+M"))
+        act_min.triggered.connect(self.showMinimized)
+        menu_win.addAction(act_min)
+
+        act_zoom = QAction("Zoomen", self)
+        act_zoom.triggered.connect(
+            lambda: self.showNormal() if self.isMaximized() else self.showMaximized()
+        )
+        menu_win.addAction(act_zoom)
+
+        # ── Hilfe (Help) ────────────────────────────────────────────────────
+        menu_help = mb.addMenu("Hilfe")
+
+        act_about = QAction("Über PostScan", self)
+        act_about.triggered.connect(lambda: QMessageBox.about(
+            self, "PostScan",
+            "PostScan – PDF-Analysetool für Eingangspost\n\n"
+            "Entwickelt von Patrick Kunze\nMail@pkunze.de"
+        ))
+        menu_help.addAction(act_about)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
