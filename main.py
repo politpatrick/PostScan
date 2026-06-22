@@ -1789,21 +1789,21 @@ class MainWindow(QMainWindow):
             "color: palette(placeholderText); font-size: 14px; }"
             "QPushButton:checked { color: palette(windowText); }"
         )
-        self._btn_toggle_queue = QPushButton("⊞")
+        self._btn_toggle_queue = QPushButton("Ablage")
         self._btn_toggle_queue.setCheckable(True)
         self._btn_toggle_queue.setChecked(True)
         self._btn_toggle_queue.setFixedHeight(24)
+        self._btn_toggle_queue.setFont(_hig_font(11))
         self._btn_toggle_queue.setStyleSheet(_corner_style)
-        self._btn_toggle_queue.setToolTip("Warteschlange ein-/ausblenden")
         self._btn_toggle_queue.clicked.connect(self._toggle_queue)
         self._tabs.setCornerWidget(self._btn_toggle_queue, Qt.Corner.TopLeftCorner)
 
-        self._btn_toggle_pdf = QPushButton("⊟")
+        self._btn_toggle_pdf = QPushButton("Vorschau")
         self._btn_toggle_pdf.setCheckable(True)
         self._btn_toggle_pdf.setChecked(True)
         self._btn_toggle_pdf.setFixedHeight(24)
+        self._btn_toggle_pdf.setFont(_hig_font(11))
         self._btn_toggle_pdf.setStyleSheet(_corner_style)
-        self._btn_toggle_pdf.setToolTip("PDF-Ansicht ein-/ausblenden")
         self._btn_toggle_pdf.clicked.connect(self._toggle_pdf)
         self._tabs.setCornerWidget(self._btn_toggle_pdf, Qt.Corner.TopRightCorner)
 
@@ -1947,8 +1947,7 @@ class MainWindow(QMainWindow):
         act_queue.setCheckable(True)
         act_queue.setChecked(True)
         act_queue.setShortcut(QKeySequence("Ctrl+1"))
-        act_queue.toggled.connect(self._btn_toggle_queue.setChecked)
-        act_queue.toggled.connect(lambda _: self._toggle_queue())
+        act_queue.triggered.connect(self._btn_toggle_queue.click)
         self._btn_toggle_queue.toggled.connect(act_queue.setChecked)
         menu_view.addAction(act_queue)
 
@@ -1956,8 +1955,7 @@ class MainWindow(QMainWindow):
         act_pdf.setCheckable(True)
         act_pdf.setChecked(True)
         act_pdf.setShortcut(QKeySequence("Ctrl+2"))
-        act_pdf.toggled.connect(self._btn_toggle_pdf.setChecked)
-        act_pdf.toggled.connect(lambda _: self._toggle_pdf())
+        act_pdf.triggered.connect(self._btn_toggle_pdf.click)
         self._btn_toggle_pdf.toggled.connect(act_pdf.setChecked)
         menu_view.addAction(act_pdf)
 
