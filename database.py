@@ -4,9 +4,16 @@ import sys
 
 
 def _stammdaten_path() -> str:
+    is_bundle = getattr(sys, "frozen", False)
     if sys.platform == "win32":
         base = os.environ.get("APPDATA", os.path.expanduser("~"))
         folder = os.path.join(base, "PostScan")
+        os.makedirs(folder, exist_ok=True)
+        return os.path.join(folder, "stammdaten.json")
+    if sys.platform == "darwin" and is_bundle:
+        folder = os.path.join(
+            os.path.expanduser("~"), "Library", "Application Support", "PostScan"
+        )
         os.makedirs(folder, exist_ok=True)
         return os.path.join(folder, "stammdaten.json")
     return os.path.join(os.path.dirname(__file__), "stammdaten.json")

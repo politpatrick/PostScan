@@ -1,0 +1,10 @@
+PyQt6>=6.6.0
+rapidfuzz>=3.0.0
+scikit-learn>=1.4.0
+pikepdf>=9.0.0
+requests>=2.31.0
+ocrmypdf>=16.0.0
+xattr>=1.1.0
+PyQt6-WebEngine>=6.6.0
+google-genai>=1.0.0
+pyinstaller>=6.0.0

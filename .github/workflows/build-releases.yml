@@ -1,0 +1,112 @@
+name: Build Releases
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ghostscript
+        run: |
+          choco install ghostscript -y
+          echo "C:\Program Files\gs\gs10.03.1\bin" >> $env:GITHUB_PATH
+
+      - name: Install Tesseract OCR
+        run: |
+          choco install tesseract -y
+          echo "C:\Program Files\Tesseract-OCR" >> $env:GITHUB_PATH
+
+      - name: Install Python dependencies
+        run: pip install -r windows/requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller windows/PostScan.spec
+
+      - name: Install Inno Setup
+        run: choco install innosetup -y
+
+      - name: Build installer
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" windows\installer.iss
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PostScan-Windows
+          path: windows/PostScan-Setup.exe
+
+  build-macos:
+    runs-on: macos-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install system dependencies
+        run: |
+          brew install tesseract ghostscript poppler
+
+      - name: Install Python dependencies
+        run: pip install -r macos/requirements.txt
+
+      - name: Build with PyInstaller
+        run: pyinstaller macos/PostScan.spec
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname PostScan -srcfolder dist/PostScan.app \
+            -ov -format UDZO dist/PostScan.dmg
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: PostScan-macOS
+          path: dist/PostScan.dmg
+
+  publish-release:
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PostScan-Windows
+
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: PostScan-macOS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            PostScan-Setup.exe
+            PostScan.dmg
+          body: "PostScan – Windows-Installer und macOS-DMG"
+          generate_release_notes: false
