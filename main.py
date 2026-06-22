@@ -31,6 +31,30 @@ import config as app_config
 import database
 import pipeline
 
+# ---------------------------------------------------------------------------
+# HIG design tokens
+# ---------------------------------------------------------------------------
+
+def _hig_font(size: int, bold: bool = False, mono: bool = False) -> "QFont":
+    from PyQt6.QtGui import QFont
+    f = QFont("SF Mono" if mono else ".AppleSystemUIFont")
+    f.setPointSize(size)
+    if bold:
+        f.setWeight(QFont.Weight.DemiBold)
+    return f
+
+_HIG_SECONDARY  = "color: palette(placeholderText);"
+_HIG_RED        = "#FF3B30"
+_HIG_GREEN      = "#34C759"
+_HIG_ACCENT     = "#007AFF"
+
+_TOGGLE_STYLE = (
+    "QPushButton { text-align: left; padding: 4px 8px; "
+    "background: palette(button); border: 1px solid palette(mid); "
+    "border-radius: 4px; }"
+    "QPushButton:checked { background: palette(mid); }"
+)
+
 EINGANG_DIR = os.path.join(os.path.dirname(__file__), "eingang")
 
 
@@ -452,7 +476,7 @@ class _EditStammdatenDialog(QDialog):
 
         form.addWidget(QLabel("Name:"), 0, 0)
         lbl_name = QLabel(name)
-        lbl_name.setStyleSheet("font-weight: bold;")
+        lbl_name.setFont(_hig_font(13, bold=True))
         form.addWidget(lbl_name, 0, 1)
 
         form.addWidget(QLabel("Abkürzung:"), 1, 0)
@@ -512,12 +536,12 @@ class DropZone(QFrame):
     files_dropped = pyqtSignal(list)
 
     _STYLE_IDLE = (
-        "DropZone { border: 2px dashed #aaa; border-radius: 8px; "
-        "background: #f7f7f7; }"
+        "DropZone { border: 2px dashed palette(mid); border-radius: 8px; "
+        "background: palette(base); }"
     )
     _STYLE_HOVER = (
-        "DropZone { border: 2px dashed #007aff; border-radius: 8px; "
-        "background: #e8f0ff; }"
+        f"DropZone {{ border: 2px dashed {_HIG_ACCENT}; border-radius: 8px; "
+        "background: palette(highlight); }"
     )
 
     def __init__(self, parent=None):
@@ -529,9 +553,8 @@ class DropZone(QFrame):
         lbl = QLabel("PDFs hier ablegen")
         lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
         lbl.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        font = lbl.font()
-        font.setPointSize(11)
-        lbl.setFont(font)
+        lbl.setFont(_hig_font(11))
+        lbl.setStyleSheet(_HIG_SECONDARY)
         lay = QVBoxLayout(self)
         lay.addWidget(lbl)
 
@@ -610,9 +633,8 @@ class MainTab(QWidget):
         # Source/confidence info
         self.lbl_source = QLabel("")
         self.lbl_source.setAlignment(Qt.AlignmentFlag.AlignRight)
-        font = self.lbl_source.font()
-        font.setPointSize(9)
-        self.lbl_source.setFont(font)
+        self.lbl_source.setFont(_hig_font(11))
+        self.lbl_source.setStyleSheet(_HIG_SECONDARY)
         top_layout.addWidget(self.lbl_source)
 
         # Extraction fields
@@ -657,14 +679,22 @@ class MainTab(QWidget):
         self._btn_edit_typ = _edit_btn("typ")
         self._btn_edit_ab  = _edit_btn("absender")
 
+        def _form_label(text: str) -> QLabel:
+            l = QLabel(text)
+            l.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            l.setFont(_hig_font(13))
+            l.setStyleSheet(_HIG_SECONDARY)
+            l.setFixedWidth(140)
+            return l
+
         for row, (lbl, widget, extra) in enumerate([
             ("Dokumenttyp:",        self.cb_typ,      self._btn_edit_typ),
-            ("Zusatzinformationen:", self.le_zusatz,   None),
+            ("Zusatzinfo:",         self.le_zusatz,   None),
             ("Absender:",           self.cb_absender,  self._btn_edit_ab),
             ("Dokumentdatum:",      self.cb_datum,     None),
             ("Personenbezug:",      self.cb_person,    None),
         ]):
-            grid.addWidget(QLabel(lbl), row, 0)
+            grid.addWidget(_form_label(lbl), row, 0)
             if extra:
                 row_w = QWidget()
                 row_l = QHBoxLayout(row_w)
@@ -679,12 +709,12 @@ class MainTab(QWidget):
 
         # Filename preview
         self.lbl_preview = QLabel("—")
-        self.lbl_preview.setFrameShape(QFrame.Shape.StyledPanel)
         self.lbl_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_preview.setWordWrap(True)
-        font2 = self.lbl_preview.font()
-        font2.setPointSize(11)
-        self.lbl_preview.setFont(font2)
+        self.lbl_preview.setFont(_hig_font(13, bold=True))
+        self.lbl_preview.setStyleSheet(
+            "QLabel { background: palette(base); border-radius: 6px; padding: 6px 10px; }"
+        )
         top_layout.addWidget(self.lbl_preview)
 
         for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
@@ -694,14 +724,30 @@ class MainTab(QWidget):
         self.cb_datum.lineEdit().editingFinished.connect(self._auto_format_datum)
         self.cb_datum.lineEdit().returnPressed.connect(self._auto_format_datum)
 
-        # Prefix toggle buttons
+        # Prefix toggle buttons — segmented control style
         prefix_layout = QHBoxLayout()
-        prefix_layout.addWidget(QLabel("Präfix:"))
+        lbl_pfx = QLabel("Präfix:")
+        lbl_pfx.setFont(_hig_font(13))
+        lbl_pfx.setStyleSheet(_HIG_SECONDARY)
+        lbl_pfx.setFixedWidth(140)
+        lbl_pfx.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        prefix_layout.addWidget(lbl_pfx)
+
+        _SEG_BASE = (
+            "QPushButton {{ border: 1px solid palette(mid); padding: 3px 12px;"
+            "background: palette(button); {radius} }}"
+            "QPushButton:checked {{ background: {accent}; color: white; border-color: {accent}; }}"
+        ).format(accent=_HIG_ACCENT, radius="{radius}")
+        _radii = [
+            "border-radius: 0; border-top-left-radius: 5px; border-bottom-left-radius: 5px; border-right: none;",
+            "border-radius: 0; border-right: none;",
+            "border-radius: 0; border-top-right-radius: 5px; border-bottom-right-radius: 5px;",
+        ]
         self._prefix_btns: dict[str, QPushButton] = {}
-        for label in ("RE", "E-Mail", "an"):
+        for label, radius in zip(("RE", "E-Mail", "an"), _radii):
             btn = QPushButton(label)
             btn.setCheckable(True)
-            btn.setFixedWidth(64)
+            btn.setStyleSheet(_SEG_BASE.replace("{radius}", radius))
             btn.clicked.connect(lambda checked, l=label: self._toggle_prefix(l))
             prefix_layout.addWidget(btn)
             self._prefix_btns[label] = btn
@@ -711,22 +757,33 @@ class MainTab(QWidget):
         # Confirm button
         self.btn_confirm = QPushButton("Bestätigen & Archivieren")
         self.btn_confirm.setEnabled(False)
+        self.btn_confirm.setDefault(True)
+        self.btn_confirm.setStyleSheet(
+            f"QPushButton {{ background: {_HIG_ACCENT}; color: white; border-radius: 6px;"
+            "padding: 6px 16px; font-weight: 600; border: none; }"
+            f"QPushButton:disabled {{ background: palette(mid); color: palette(placeholderText); }}"
+            f"QPushButton:pressed {{ background: #005ecb; }}"
+        )
         self.btn_confirm.clicked.connect(self._confirm)
         top_layout.addWidget(self.btn_confirm)
 
         splitter.addWidget(top_widget)
 
         # --- Bottom widget: OCR raw text ---
-        ocr_group = QGroupBox("Debug – Extrahierter Text & Klassifikation")
-        ocr_layout = QVBoxLayout(ocr_group)
+        ocr_widget = QWidget()
+        ocr_layout = QVBoxLayout(ocr_widget)
+        ocr_layout.setContentsMargins(0, 4, 0, 0)
+        ocr_layout.setSpacing(4)
+        ocr_header = QLabel("DEBUG – EXTRAHIERTER TEXT & KLASSIFIKATION")
+        ocr_header.setFont(_hig_font(11))
+        ocr_header.setStyleSheet(_HIG_SECONDARY)
+        ocr_layout.addWidget(ocr_header)
         self.txt_ocr = QTextEdit()
         self.txt_ocr.setReadOnly(True)
         self.txt_ocr.setPlaceholderText("Nach der Analyse wird hier der erkannte Rohtext angezeigt …")
-        font3 = self.txt_ocr.font()
-        font3.setPointSize(10)
-        self.txt_ocr.setFont(font3)
+        self.txt_ocr.setFont(_hig_font(12, mono=True))
         ocr_layout.addWidget(self.txt_ocr)
-        splitter.addWidget(ocr_group)
+        splitter.addWidget(ocr_widget)
 
         splitter.setSizes([320, 200])
         root.addWidget(splitter)
@@ -1121,10 +1178,6 @@ class SettingsTab(QWidget):
         root.addLayout(top)
 
         # ── Bottom: KI-Kontext (Kombinationen, einklappbar) ───────────────
-        _TOGGLE_STYLE = (
-            "QPushButton { text-align: left; padding: 4px 8px; "
-            "background: #f0f0f0; border: 1px solid #bbb; border-radius: 3px; }"
-        )
         self._btn_toggle_kombi = QPushButton("▶   KI-Kontext – historische Kombinationen")
         self._btn_toggle_kombi.setCheckable(True)
         self._btn_toggle_kombi.setChecked(False)
@@ -1486,13 +1539,13 @@ class KIStatusTab(QWidget):
     def _set_status(self, label: QLabel, state):
         if state is None:
             label.setText("⋯  Prüfe …")
-            label.setStyleSheet("color: #888;")
+            label.setStyleSheet(_HIG_SECONDARY)
         elif state:
             label.setText("✓  OK")
-            label.setStyleSheet("color: green; font-weight: bold;")
+            label.setStyleSheet(f"color: {_HIG_GREEN}; font-weight: 600;")
         else:
             label.setText("✗  Fehlt")
-            label.setStyleSheet("color: red; font-weight: bold;")
+            label.setStyleSheet(f"color: {_HIG_RED}; font-weight: 600;")
 
     def _check(self):
         self._btn_check.setEnabled(False)
@@ -1593,17 +1646,17 @@ class KIStatusTab(QWidget):
         cfg["google_api_key"] = key
         app_config.save(cfg)
         self._lbl_google_status.setText("Gespeichert.")
-        self._lbl_google_status.setStyleSheet("color: green;")
+        self._lbl_google_status.setStyleSheet(f"color: {_HIG_GREEN};")
 
     def _test_google(self):
         key = self._le_apikey.text().strip()
         if not key:
             self._lbl_google_status.setText("Kein API-Schlüssel eingegeben.")
-            self._lbl_google_status.setStyleSheet("color: red;")
+            self._lbl_google_status.setStyleSheet(f"color: {_HIG_RED};")
             return
         self._btn_test_google.setEnabled(False)
         self._lbl_google_status.setText("Teste …")
-        self._lbl_google_status.setStyleSheet("color: #888;")
+        self._lbl_google_status.setStyleSheet(_HIG_SECONDARY)
         self._test_worker = GoogleTestWorker(key)
         self._test_worker.result.connect(self._on_test_done)
         self._test_worker.start()
@@ -1612,7 +1665,7 @@ class KIStatusTab(QWidget):
         self._btn_test_google.setEnabled(True)
         self._lbl_google_status.setText("✓ OK" if success else "✗ Fehler")
         self._lbl_google_status.setStyleSheet(
-            "color: green; font-weight: bold;" if success else "color: red; font-weight: bold;"
+            f"color: {_HIG_GREEN}; font-weight: 600;" if success else f"color: {_HIG_RED}; font-weight: 600;"
         )
         self._txt.setPlainText(msg)
 
@@ -1651,18 +1704,25 @@ class MainWindow(QMainWindow):
         self._queue_last_size = 180
         self._pdf_last_size = 600
 
-        self._btn_toggle_queue = QPushButton("☰")
+        _corner_style = (
+            "QPushButton { border: none; background: transparent; padding: 2px 6px;"
+            "color: palette(placeholderText); font-size: 14px; }"
+            "QPushButton:checked { color: palette(windowText); }"
+        )
+        self._btn_toggle_queue = QPushButton("⊞")
         self._btn_toggle_queue.setCheckable(True)
         self._btn_toggle_queue.setChecked(True)
         self._btn_toggle_queue.setFixedHeight(24)
+        self._btn_toggle_queue.setStyleSheet(_corner_style)
         self._btn_toggle_queue.setToolTip("Warteschlange ein-/ausblenden")
         self._btn_toggle_queue.clicked.connect(self._toggle_queue)
         self._tabs.setCornerWidget(self._btn_toggle_queue, Qt.Corner.TopLeftCorner)
 
-        self._btn_toggle_pdf = QPushButton("PDF")
+        self._btn_toggle_pdf = QPushButton("⊟")
         self._btn_toggle_pdf.setCheckable(True)
         self._btn_toggle_pdf.setChecked(True)
         self._btn_toggle_pdf.setFixedHeight(24)
+        self._btn_toggle_pdf.setStyleSheet(_corner_style)
         self._btn_toggle_pdf.setToolTip("PDF-Ansicht ein-/ausblenden")
         self._btn_toggle_pdf.clicked.connect(self._toggle_pdf)
         self._tabs.setCornerWidget(self._btn_toggle_pdf, Qt.Corner.TopRightCorner)
@@ -1679,19 +1739,32 @@ class MainWindow(QMainWindow):
         self._drop_zone.files_dropped.connect(self._enqueue)
         qp_layout.addWidget(self._drop_zone)
 
-        self._lbl_queue = QLabel("Warteschlange")
-        font_q = self._lbl_queue.font()
-        font_q.setPointSize(10)
-        self._lbl_queue.setFont(font_q)
+        sep = QFrame()
+        sep.setFrameShape(QFrame.Shape.HLine)
+        sep.setStyleSheet("color: palette(mid);")
+        qp_layout.addWidget(sep)
+
+        self._lbl_queue = QLabel("WARTESCHLANGE")
+        self._lbl_queue.setFont(_hig_font(11))
+        self._lbl_queue.setStyleSheet(_HIG_SECONDARY)
+        self._lbl_queue.setContentsMargins(4, 2, 0, 2)
         qp_layout.addWidget(self._lbl_queue)
 
         self._lst_queue = QListWidget()
         self._lst_queue.setSelectionMode(QListWidget.SelectionMode.SingleSelection)
         self._lst_queue.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._lst_queue.setFont(_hig_font(11))
+        self._lst_queue.setAlternatingRowColors(False)
+        self._lst_queue.setStyleSheet("QListWidget { border: none; background: transparent; }")
         self._lst_queue.itemClicked.connect(self._on_queue_item_clicked)
         qp_layout.addWidget(self._lst_queue, stretch=1)
 
         self._btn_clear = QPushButton("Leeren")
+        self._btn_clear.setStyleSheet(
+            f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
+            "border-radius: 5px; padding: 3px 8px; background: transparent; }"
+            f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
+        )
         self._btn_clear.clicked.connect(self._clear_queue)
         qp_layout.addWidget(self._btn_clear)
 
@@ -1875,9 +1948,10 @@ class MainWindow(QMainWindow):
         self._lst_queue.clear()
         current = self.main_tab.pdf_path
 
+        pal = self._lst_queue.palette()
         if current:
             item = QListWidgetItem(f"▶  {os.path.basename(current)}")
-            item.setForeground(QColor("#007aff"))
+            item.setForeground(QColor(_HIG_ACCENT))
             item.setData(Qt.ItemDataRole.UserRole, current)
             item.setToolTip(current)
             self._lst_queue.addItem(item)
@@ -1886,13 +1960,13 @@ class MainWindow(QMainWindow):
             name = os.path.basename(path)
             if path in self._cache:
                 text = f"✓  {name}"
-                color = QColor("#2e7d32")
+                color = QColor(_HIG_GREEN)
             elif path in self._pre_workers:
                 text = f"⋯  {name}"
-                color = QColor("#888")
+                color = pal.color(pal.ColorRole.PlaceholderText)
             else:
-                text = f"    {name}"
-                color = QColor("#333")
+                text = f"   {name}"
+                color = pal.color(pal.ColorRole.WindowText)
             item = QListWidgetItem(text)
             item.setForeground(color)
             item.setToolTip(path)
