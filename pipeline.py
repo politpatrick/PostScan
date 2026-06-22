@@ -2,7 +2,10 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
+
+_POPEN_FLAGS = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
 
 import requests
 from rapidfuzz import fuzz
@@ -71,6 +74,7 @@ def _pdftotext(pdf_path: str, max_pages: int = 2) -> str:
         result = subprocess.run(
             ["pdftotext", "-l", str(max_pages), pdf_path, "-"],
             capture_output=True, text=True, timeout=30,
+            **_POPEN_FLAGS,
         )
         return result.stdout or ""
     except Exception:
@@ -104,6 +108,7 @@ def run_ocr(pdf_path: str) -> str:
             ],
             capture_output=True,
             timeout=120,
+            **_POPEN_FLAGS,
         )
         with open(sidecar_path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()

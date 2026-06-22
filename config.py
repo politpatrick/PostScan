@@ -6,6 +6,8 @@ _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 if sys.platform == "darwin":
     OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b-mlx"]
+elif sys.platform == "win32":
+    OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b"]
 else:
     OLLAMA_MODELS = ["gemma2:9b"]
 

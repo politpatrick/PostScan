@@ -1385,10 +1385,12 @@ class KIStatusTab(QWidget):
             self._txt.clear()
             self._txt.append("Starte Ollama-Server …")
             try:
+                _popen_flags = {"creationflags": 0x08000000} if sys.platform == "win32" else {}
                 subprocess.Popen(
                     ["ollama", "serve"],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
+                    **_popen_flags,
                 )
                 self._txt.append("Warte auf Serverstart …")
             except Exception as e:
