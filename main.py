@@ -1181,8 +1181,8 @@ class KIStatusTab(QWidget):
         # ── Provider selection ──────────────────────────────────────────────
         grp_sel = QGroupBox("KI-Anbieter")
         sel_layout = QHBoxLayout(grp_sel)
-        self._radio_ollama = QRadioButton("Ollama / gemma2:9b  (lokal, offline)")
-        self._radio_google = QRadioButton("Google GenAI / gemini-2.5-flash-lite  (Cloud)")
+        self._radio_ollama = QRadioButton("Ollama  (lokal, offline)")
+        self._radio_google = QRadioButton("Google GenAI  (Cloud)")
         self._provider_group = QButtonGroup(self)
         self._provider_group.addButton(self._radio_ollama, 0)
         self._provider_group.addButton(self._radio_google, 1)
@@ -1300,7 +1300,7 @@ class KIStatusTab(QWidget):
         cfg["llm_provider"] = provider
         app_config.save(cfg)
         model = app_config.get_ollama_model()
-        name = "Google GenAI (gemini-2.5-flash-lite)" if provider == "google" else f"Ollama ({model})"
+        name = "Google GenAI" if provider == "google" else "Ollama"
         self._txt.setPlainText(f"KI-Anbieter gespeichert: {name}")
 
     def _save_ollama_model(self):
