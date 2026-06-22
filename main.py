@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
     QMessageBox, QProgressBar, QFrame, QGridLayout, QStatusBar,
     QTextEdit, QSplitter, QLineEdit, QCompleter,
     QListWidget, QListWidgetItem,
-    QDialog, QDialogButtonBox,
+    QDialog, QDialogButtonBox, QStackedWidget,
 )
 
 import config as app_config
@@ -55,23 +55,57 @@ _HIG_GREEN      = "#34C759"
 _HIG_ACCENT     = "#007AFF"
 
 _TOGGLE_STYLE = (
-    "QPushButton { text-align: left; padding: 4px 8px; "
+    "QPushButton { text-align: left; padding: 5px 8px; "
     "background: palette(button); border: 1px solid palette(mid); "
     "border-radius: 4px; }"
     "QPushButton:checked { background: palette(mid); }"
+    "QPushButton:focus { border-color: palette(highlight); outline: none; }"
 )
 
 _DESTRUCTIVE_BTN = (
     f"QPushButton {{ color: {_HIG_RED}; border: 1px solid {_HIG_RED};"
-    "border-radius: 5px; padding: 3px 8px; background: transparent; }"
+    "border-radius: 5px; padding: 5px 8px; background: transparent; }"
+    "QPushButton:hover { background: rgba(255, 59, 48, 0.08); }"
     f"QPushButton:pressed {{ background: {_HIG_RED}; color: white; }}"
+    f"QPushButton:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
 )
 
 _BORDERLESS_BTN = (
-    "QPushButton { border: none; background: transparent; padding: 2px 6px;"
+    "QPushButton { border: 1px solid transparent; background: transparent; padding: 2px 6px;"
     "color: palette(placeholderText); border-radius: 4px; }"
     "QPushButton:hover { color: palette(windowText); background: palette(mid); }"
     "QPushButton:checked { color: palette(windowText); }"
+    "QPushButton:focus { border-color: palette(highlight); outline: none; }"
+)
+
+_INPUT_STYLE = (
+    f"QLineEdit {{ border: 1px solid palette(mid); border-radius: 5px;"
+    "padding: 4px 8px; background: palette(base); }"
+    f"QLineEdit:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+    "QLineEdit:disabled { background: palette(window); color: palette(placeholderText); }"
+)
+
+_TEXTEDIT_STYLE = (
+    f"QTextEdit {{ border: 1px solid palette(mid); border-radius: 6px;"
+    "padding: 4px; background: palette(base); }}"
+    f"QTextEdit:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+)
+
+_COMBO_STYLE = (
+    f"QComboBox {{ border: 1px solid palette(mid); border-radius: 5px;"
+    "background: palette(base); padding: 0px; }}"
+    f"QComboBox:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+    "QComboBox:disabled { background: palette(window); color: palette(placeholderText); }"
+    "QComboBox::drop-down { border: none; width: 20px; }"
+    "QComboBox QLineEdit { border: none; background: transparent; padding: 4px 8px; }"
+)
+
+_COMBO_ERROR_STYLE = (
+    f"QComboBox {{ border: 2px solid {_HIG_RED}; border-radius: 5px;"
+    "background: palette(base); padding: 0px; }}"
+    f"QComboBox:focus {{ border-color: {_HIG_RED}; outline: none; }}"
+    "QComboBox::drop-down { border: none; width: 20px; }"
+    "QComboBox QLineEdit { border: none; background: transparent; padding: 3px 7px; }"
 )
 
 EINGANG_DIR = os.path.join(os.path.dirname(__file__), "eingang")
@@ -492,6 +526,8 @@ class _EditStammdatenDialog(QDialog):
         self.setWindowModality(Qt.WindowModality.WindowModal)
 
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
         form = QGridLayout()
 
         form.addWidget(QLabel("Name:"), 0, 0)
@@ -501,11 +537,14 @@ class _EditStammdatenDialog(QDialog):
 
         form.addWidget(QLabel("Abkürzung:"), 1, 0)
         self.le_abk = QLineEdit()
+        self.le_abk.setPlaceholderText("optional")
+        self.le_abk.setStyleSheet(_INPUT_STYLE)
         form.addWidget(self.le_abk, 1, 1)
 
         form.addWidget(QLabel("Synonyme:"), 2, 0)
         self.le_syn = QLineEdit()
         self.le_syn.setPlaceholderText("kommagetrennt, z.B. AOK, AOK Bayern")
+        self.le_syn.setStyleSheet(_INPUT_STYLE)
         form.addWidget(self.le_syn, 2, 1)
 
         layout.addLayout(form)
@@ -612,6 +651,7 @@ class MainTab(QWidget):
     confirmed = pyqtSignal(str)   # emits original pdf_path before clearing
     result_ready = pyqtSignal(str, dict)  # emits (pdf_path, result) after analysis
     pdf_opened = pyqtSignal(str)
+    document_closed = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -629,6 +669,14 @@ class MainTab(QWidget):
         # File open row
         top = QHBoxLayout()
         self.btn_open = QPushButton("PDF öffnen …")
+        self.btn_open.setStyleSheet(
+            f"QPushButton {{ border: 1px solid palette(mid); border-radius: 5px;"
+            "padding: 5px 12px; background: palette(button); }"
+            "QPushButton:hover { background: palette(midlight); }"
+            "QPushButton:pressed { background: palette(mid); }"
+            "QPushButton:disabled { color: palette(placeholderText); }"
+            f"QPushButton:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+        )
         self.btn_open.clicked.connect(self._open_pdf)
         self.lbl_file = QLabel("Kein Dokument geladen")
         self.lbl_file.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
@@ -640,6 +688,13 @@ class MainTab(QWidget):
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
+        self.progress.setFixedHeight(4)
+        self.progress.setTextVisible(False)
+        self.progress.setStyleSheet(
+            "QProgressBar { border: none; border-radius: 2px;"
+            "background: palette(mid); }"
+            f"QProgressBar::chunk {{ background: {_HIG_ACCENT}; border-radius: 2px; }}"
+        )
         root.addWidget(self.progress)
 
         # Splitter: fields (top) + OCR text (bottom, collapsible)
@@ -667,6 +722,7 @@ class MainTab(QWidget):
             c.setEditable(True)
             c.setLineEdit(_SelectAllLineEdit())
             c.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            c.setStyleSheet(_COMBO_STYLE)
             return c
 
         self.cb_typ = _combo()
@@ -674,12 +730,18 @@ class MainTab(QWidget):
         self.cb_datum = _combo()
         self.cb_person = _combo()
         self.le_zusatz = _SelectAllLineEdit()
+        self.le_zusatz.setPlaceholderText("optional")
+        self.le_zusatz.setStyleSheet(_INPUT_STYLE)
 
         self._typ_completer = _NameAbkCompleter(self.cb_typ)
         self.cb_typ.lineEdit().setCompleter(self._typ_completer)
+        self.cb_typ.lineEdit().setPlaceholderText("z.B. Rechnung, Bescheid …")
 
         self._absender_completer = _NameAbkCompleter(self.cb_absender)
         self.cb_absender.lineEdit().setCompleter(self._absender_completer)
+        self.cb_absender.lineEdit().setPlaceholderText("z.B. Finanzamt, AOK …")
+
+        self.cb_datum.lineEdit().setPlaceholderText("TT.MM.JJ")
 
         self._person_completer = QCompleter(self.cb_person)
         self._person_completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
@@ -689,6 +751,7 @@ class MainTab(QWidget):
             lambda text: self.cb_person.lineEdit().setText(text)
         )
         self.cb_person.lineEdit().setCompleter(self._person_completer)
+        self.cb_person.lineEdit().setPlaceholderText("optional")
 
         def _edit_btn(kind: str) -> QPushButton:
             b = QPushButton("✏")
@@ -741,6 +804,11 @@ class MainTab(QWidget):
 
         for cb in (self.cb_typ, self.cb_absender, self.cb_datum, self.cb_person):
             cb.currentTextChanged.connect(self._update_preview)
+
+        self.cb_typ.currentTextChanged.connect(
+            lambda: self._set_combo_error(self.cb_typ, False))
+        self.cb_absender.currentTextChanged.connect(
+            lambda: self._set_combo_error(self.cb_absender, False))
         self.le_zusatz.textChanged.connect(self._update_preview)
 
         self.cb_datum.lineEdit().editingFinished.connect(self._auto_format_datum)
@@ -756,10 +824,13 @@ class MainTab(QWidget):
         prefix_layout.addWidget(lbl_pfx)
 
         _SEG_BASE = (
-            "QPushButton {{ border: 1px solid palette(mid); padding: 3px 12px;"
+            "QPushButton {{ border: 1px solid palette(mid); padding: 5px 12px;"
             "background: palette(button); {radius} }}"
             "QPushButton:checked {{ background: {accent}; color: white; border-color: {accent}; }}"
-        ).format(accent=_HIG_ACCENT, radius="{radius}")
+        ).format(accent=_HIG_ACCENT, radius="{radius}") + (
+            f"QPushButton:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+            f"QPushButton:checked:focus {{ border-color: white; outline: none; }}"
+        )
         _radii = [
             "border-radius: 0; border-top-left-radius: 5px; border-bottom-left-radius: 5px; border-right: none;",
             "border-radius: 0; border-right: none;",
@@ -782,9 +853,11 @@ class MainTab(QWidget):
         self.btn_confirm.setDefault(True)
         self.btn_confirm.setStyleSheet(
             f"QPushButton {{ background: {_HIG_ACCENT}; color: white; border-radius: 6px;"
-            "padding: 6px 16px; font-weight: 600; border: none; }"
+            "padding: 6px 16px; font-weight: 600; border: 2px solid transparent; }"
             f"QPushButton:disabled {{ background: palette(mid); color: palette(placeholderText); }}"
+            "QPushButton:hover { background: #006FE6; }"
             f"QPushButton:pressed {{ background: #005ecb; }}"
+            "QPushButton:focus { border: 2px solid white; outline: none; }"
         )
         self.btn_confirm.clicked.connect(self._confirm)
         top_layout.addWidget(self.btn_confirm)
@@ -796,7 +869,7 @@ class MainTab(QWidget):
         ocr_layout = QVBoxLayout(ocr_widget)
         ocr_layout.setContentsMargins(0, 4, 0, 0)
         ocr_layout.setSpacing(4)
-        ocr_header = QLabel("DEBUG – EXTRAHIERTER TEXT & KLASSIFIKATION")
+        ocr_header = QLabel("EXTRAHIERTER TEXT")
         ocr_header.setFont(_hig_font(11))
         ocr_header.setStyleSheet(_HIG_SECONDARY)
         ocr_layout.addWidget(ocr_header)
@@ -804,11 +877,58 @@ class MainTab(QWidget):
         self.txt_ocr.setReadOnly(True)
         self.txt_ocr.setPlaceholderText("Nach der Analyse wird hier der erkannte Rohtext angezeigt …")
         self.txt_ocr.setFont(_hig_font(12, mono=True))
+        self.txt_ocr.setStyleSheet(_TEXTEDIT_STYLE)
         ocr_layout.addWidget(self.txt_ocr)
         splitter.addWidget(ocr_widget)
 
         splitter.setSizes([320, 200])
-        root.addWidget(splitter)
+
+        # ── Empty state (shown when no document is loaded) ─────────────────
+        empty = QWidget()
+        empty_v = QVBoxLayout(empty)
+        empty_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_v.setSpacing(8)
+
+        lbl_icon = QLabel()
+        lbl_icon.setPixmap(
+            self.style().standardIcon(self.style().StandardPixmap.SP_FileIcon)
+            .pixmap(48, 48)
+        )
+        lbl_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_empty_title = QLabel("Kein Dokument geladen")
+        lbl_empty_title.setFont(_hig_font(17, bold=True))
+        lbl_empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        lbl_empty_sub = QLabel("Öffnen Sie eine PDF-Datei über den Button oben\noder ziehen Sie sie in dieses Fenster.")
+        lbl_empty_sub.setFont(_hig_font(13))
+        lbl_empty_sub.setStyleSheet(_HIG_SECONDARY)
+        lbl_empty_sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        empty_v.addWidget(lbl_icon)
+        empty_v.addWidget(lbl_empty_title)
+        empty_v.addWidget(lbl_empty_sub)
+
+        self._stacked = QStackedWidget()
+        self._stacked.addWidget(empty)   # index 0 – empty state
+        self._stacked.addWidget(splitter)  # index 1 – content
+        self._stacked.setCurrentIndex(0)
+        root.addWidget(self._stacked)
+
+        # ── Drag & Drop overlay ─────────────────────────────────────────
+        self.setAcceptDrops(True)
+        self._drag_overlay = QFrame(self)
+        self._drag_overlay.setStyleSheet(
+            f"QFrame {{ border: 3px solid {_HIG_ACCENT}; border-radius: 10px;"
+            "background: rgba(0, 122, 255, 18); }}"
+        )
+        _ov_lbl = QLabel("PDF hier ablegen", self._drag_overlay)
+        _ov_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        _ov_lbl.setFont(_hig_font(17, bold=True))
+        _ov_lbl.setStyleSheet(f"color: {_HIG_ACCENT}; background: transparent; border: none;")
+        QVBoxLayout(self._drag_overlay).addWidget(_ov_lbl)
+        self._drag_overlay.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._drag_overlay.hide()
 
         # ── VoiceOver-Beschriftungen ────────────────────────────────────
         self.btn_open.setAccessibleName("PDF öffnen")
@@ -834,7 +954,62 @@ class MainTab(QWidget):
         self.btn_confirm.setAccessibleDescription("Speichert und archiviert das Dokument mit dem angezeigten Dateinamen")
         self.txt_ocr.setAccessibleName("Extrahierter Text und Klassifikation")
 
+        # ── Tab-Reihenfolge ────────────────────────────────────────────────
+        pairs = [
+            (self.btn_open,    self.cb_typ),
+            (self.cb_typ,      self.le_zusatz),
+            (self.le_zusatz,   self.cb_absender),
+            (self.cb_absender, self.cb_datum),
+            (self.cb_datum,    self.cb_person),
+            (self.cb_person,   self._prefix_btns["RE"]),
+            (self._prefix_btns["RE"],    self._prefix_btns["E-Mail"]),
+            (self._prefix_btns["E-Mail"], self._prefix_btns["an"]),
+            (self._prefix_btns["an"],    self.btn_confirm),
+        ]
+        for a, b in pairs:
+            QWidget.setTabOrder(a, b)
+
     # ------------------------------------------------------------------
+
+    def _show_empty(self):
+        self._stacked.setCurrentIndex(0)
+
+    def _show_content(self):
+        self._stacked.setCurrentIndex(1)
+
+    def _set_combo_error(self, combo: "QComboBox", error: bool):
+        combo.setStyleSheet(_COMBO_ERROR_STYLE if error else _COMBO_STYLE)
+
+    # ── Drag & Drop ────────────────────────────────────────────────────
+    def _drop_pdfs(self, event) -> list[str]:
+        return [
+            u.toLocalFile() for u in event.mimeData().urls()
+            if u.toLocalFile().lower().endswith(".pdf")
+        ]
+
+    def dragEnterEvent(self, event):
+        if self._drop_pdfs(event):
+            self._drag_overlay.setGeometry(self.rect())
+            self._drag_overlay.show()
+            self._drag_overlay.raise_()
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):
+        self._drag_overlay.hide()
+
+    def dropEvent(self, event):
+        self._drag_overlay.hide()
+        pdfs = self._drop_pdfs(event)
+        if pdfs:
+            self.load_pdf(pdfs[0])
+            event.acceptProposedAction()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self._drag_overlay.isVisible():
+            self._drag_overlay.setGeometry(self.rect())
 
     def _open_pdf(self):
         os.makedirs(EINGANG_DIR, exist_ok=True)
@@ -852,6 +1027,7 @@ class MainTab(QWidget):
         self.btn_confirm.setEnabled(False)
         self.btn_open.setEnabled(False)
         self._clear_fields()
+        self._show_content()
         self.progress.setVisible(True)
         self.pdf_opened.emit(path)
 
@@ -869,6 +1045,7 @@ class MainTab(QWidget):
         self.btn_open.setEnabled(True)
         self.progress.setVisible(False)
         self._clear_fields()
+        self._show_content()
         self.pdf_opened.emit(path)
         self._on_analysis_done(result)
 
@@ -1093,8 +1270,12 @@ class MainTab(QWidget):
         per    = self.cb_person.currentText().strip()
 
         if not typ or not ab:
-            QMessageBox.warning(self, "Fehlende Felder", "Bitte Dokumenttyp und Absender angeben.")
+            self._set_combo_error(self.cb_typ, not typ)
+            self._set_combo_error(self.cb_absender, not ab)
+            self.status_message.emit("Bitte Dokumenttyp und Absender angeben")
             return
+        self._set_combo_error(self.cb_typ, False)
+        self._set_combo_error(self.cb_absender, False)
 
         dat = _normalize_date(dat)
         self.cb_datum.setCurrentText(dat)
@@ -1120,6 +1301,7 @@ class MainTab(QWidget):
         self.lbl_file.setText("Kein Dokument geladen")
         self.lbl_source.setText("")
         self._clear_fields()
+        self._show_empty()
         self.settings_refresh_requested.emit()
         self.confirmed.emit(orig_path)
 
@@ -1148,6 +1330,8 @@ class MainTab(QWidget):
         self.lbl_file.setText("Kein Dokument geladen")
         self.lbl_source.setText("")
         self._clear_fields()
+        self._show_empty()
+        self.document_closed.emit()
 
 
 # ---------------------------------------------------------------------------
@@ -1158,8 +1342,21 @@ def _style_table(t: QTableWidget) -> QTableWidget:
     t.setShowGrid(False)
     t.setAlternatingRowColors(True)
     t.verticalHeader().setVisible(False)
-    t.horizontalHeader().setHighlightSections(False)
-    t.setStyleSheet("QTableWidget { border: none; }")
+    hdr = t.horizontalHeader()
+    hdr.setHighlightSections(False)
+    hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    t.setStyleSheet(
+        "QTableWidget { border: none; }"
+        "QHeaderView::section {"
+        "  background: palette(window);"
+        "  border: none;"
+        "  border-bottom: 1px solid palette(mid);"
+        "  padding: 4px 8px;"
+        "  font-size: 11px;"
+        "  color: palette(placeholderText);"
+        "}"
+        "QHeaderView::section:first { padding-left: 0px; }"
+    )
     return t
 
 
@@ -1199,6 +1396,8 @@ class SettingsTab(QWidget):
 
     def _build_ui(self):
         root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(12)
 
         # ── Dokumenttypen + Absender (vertikal) | Personen ───────────────
         self.tbl_typen = QTableWidget(0, 3)
@@ -1479,10 +1678,13 @@ class KIStatusTab(QWidget):
 
         sel_row = QHBoxLayout()
         _seg_prov = (
-            "QPushButton {{ border: 1px solid palette(mid); padding: 4px 16px;"
+            "QPushButton {{ border: 1px solid palette(mid); padding: 5px 16px;"
             "background: palette(button); {radius} }}"
             "QPushButton:checked {{ background: {accent}; color: white; border-color: {accent}; }}"
-        ).format(accent=_HIG_ACCENT, radius="{radius}")
+        ).format(accent=_HIG_ACCENT, radius="{radius}") + (
+            f"QPushButton:focus {{ border-color: {_HIG_ACCENT}; outline: none; }}"
+            f"QPushButton:checked:focus {{ border-color: white; outline: none; }}"
+        )
         self._btn_ollama = QPushButton("Ollama  (lokal, offline)")
         self._btn_ollama.setCheckable(True)
         self._btn_ollama.setStyleSheet(_seg_prov.replace("{radius}",
@@ -1587,6 +1789,7 @@ class KIStatusTab(QWidget):
         key_row.addWidget(QLabel("API-Schlüssel:"))
         self._le_apikey = QLineEdit()
         self._le_apikey.setPlaceholderText("AIza…")
+        self._le_apikey.setStyleSheet(_INPUT_STYLE)
         self._le_apikey.setEchoMode(QLineEdit.EchoMode.Password)
         self._le_apikey.setText(app_config.get_google_api_key())
         key_row.addWidget(self._le_apikey)
@@ -1628,6 +1831,7 @@ class KIStatusTab(QWidget):
         self._txt.setReadOnly(True)
         self._txt.setMaximumHeight(140)
         self._txt.setFont(_hig_font(12, mono=True))
+        self._txt.setPlaceholderText("Verbindungstest und API-Aufrufe werden hier protokolliert …")
         self._txt.setStyleSheet(
             "QTextEdit { border: none; background: palette(base); border-radius: 6px; }"
         )
@@ -1946,6 +2150,10 @@ class MainWindow(QMainWindow):
         self.main_tab.confirmed.connect(self._on_confirmed)
         self.main_tab.result_ready.connect(self._on_result_ready)
         self.main_tab.pdf_opened.connect(self._show_pdf)
+        self.main_tab.pdf_opened.connect(
+            lambda path: self.setWindowTitle(f"{os.path.basename(path)} — PostScan"))
+        self.main_tab.document_closed.connect(
+            lambda: self.setWindowTitle("PostScan"))
 
         self._build_menu()
         self._restore_geometry()
@@ -1975,6 +2183,18 @@ class MainWindow(QMainWindow):
         act_open.setShortcut(QKeySequence.StandardKey.Open)
         act_open.triggered.connect(self.main_tab._open_pdf)
         menu_file.addAction(act_open)
+
+        act_close_doc = QAction("Dokument schließen", self)
+        act_close_doc.setShortcut(QKeySequence("Ctrl+W"))
+        act_close_doc.triggered.connect(self.main_tab.reset)
+        menu_file.addAction(act_close_doc)
+
+        menu_file.addSeparator()
+
+        act_confirm = QAction("Archivieren", self)
+        act_confirm.setShortcut(QKeySequence("Ctrl+Return"))
+        act_confirm.triggered.connect(self.main_tab._confirm)
+        menu_file.addAction(act_confirm)
 
         menu_file.addSeparator()
 
@@ -2158,6 +2378,8 @@ class MainWindow(QMainWindow):
         self._cache.pop(orig_path, None)
         self._pdf_doc.close()
         self._load_next()
+        if not self.main_tab.pdf_path:
+            self.setWindowTitle("PostScan")
 
     # ------------------------------------------------------------------
     # Queue management
@@ -2308,7 +2530,19 @@ def main():
         except Exception:
             pass
 
+    app.setStyleSheet(
+        "QToolTip {"
+        "  background: palette(toolTipBase);"
+        "  color: palette(toolTipText);"
+        "  border: 1px solid palette(mid);"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "  font-size: 12px;"
+        "}"
+    )
+
     window = MainWindow()
+    window.setMinimumSize(820, 580)
     if os.path.exists(icon_path):
         window.setWindowIcon(QIcon(icon_path))
     if _MACOS:
