@@ -675,7 +675,7 @@ class MainTab(QWidget):
         elif source == "fuzzy":
             src_text = f"Fuzzy-Lane · Konfidenz: {conf:.0%}"
         else:
-            src_text = f"LLM-Fallback (gemma2:9b) · TF-IDF: {conf:.0%}"
+            src_text = f"LLM-Fallback ({app_config.get_ollama_model()}) · TF-IDF: {conf:.0%}"
         neu_parts = []
         if result.get("vorschlag_typ"):
             neu_parts.append(f"Typ: {result.get('dokumenttyp', '')}")

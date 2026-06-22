@@ -5,13 +5,16 @@ import sys
 _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "config.json")
 
 if sys.platform == "darwin":
-    OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b-mlx"]
+    OLLAMA_MODELS = ["gemma4:e2b-mlx"]
+    _DEFAULT_MODEL = "gemma4:e2b-mlx"
 elif sys.platform == "win32":
-    OLLAMA_MODELS = ["gemma2:9b", "gemma4:e2b"]
+    OLLAMA_MODELS = ["gemma4:e2b"]
+    _DEFAULT_MODEL = "gemma4:e2b"
 else:
-    OLLAMA_MODELS = ["gemma2:9b"]
+    OLLAMA_MODELS = ["gemma4:e2b"]
+    _DEFAULT_MODEL = "gemma4:e2b"
 
-_DEFAULTS: dict = {"llm_provider": "ollama", "ollama_model": "gemma2:9b", "google_api_key": ""}
+_DEFAULTS: dict = {"llm_provider": "ollama", "ollama_model": _DEFAULT_MODEL, "google_api_key": ""}
 
 
 def load() -> dict:
@@ -33,7 +36,7 @@ def get_provider() -> str:
 
 
 def get_ollama_model() -> str:
-    return load().get("ollama_model", "gemma2:9b")
+    return load().get("ollama_model", _DEFAULT_MODEL)
 
 
 def get_google_api_key() -> str:
