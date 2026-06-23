@@ -1,7 +1,8 @@
 @echo off
-if not exist ".venv\Scripts\python.exe" (
+cd /d "%~dp0"
+if not exist ".venv\Scripts\pythonw.exe" (
     echo Bitte zuerst setup-windows.bat ausfuehren.
-    pause & exit /b 1
+    pause
+    exit /b 1
 )
-call .venv\Scripts\activate.bat
-start "" pythonw -c "import main; main.main()"
+start "" ".venv\Scripts\pythonw.exe" "%~dp0main.py"
