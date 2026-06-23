@@ -127,9 +127,9 @@ python main.py
 ```bash
 brew install ollama           # macOS
 ollama serve &
-ollama pull phi3:mini
+ollama pull gemma4:e2b       # Beispiel — jedes Ollama-Modell funktioniert
 ```
-> Alternativ: Im Tab **„KI-Einrichtung"** den Status prüfen und phi3:mini direkt aus der App laden.
+> Das Modell ist frei wählbar. Im Tab **„KI-Einrichtung"** Modellname eintragen und direkt aus der App herunterladen.
 
 **Google GenAI (Cloud):**
 Im Tab **„KI-Einrichtung"** auf „Google GenAI" umschalten und einen API-Schlüssel von [aistudio.google.com](https://aistudio.google.com) eintragen.
@@ -200,7 +200,7 @@ PostScan/
 | `pdftotext: command not found` | `brew install poppler` (macOS) oder Poppler-Windows installieren |
 | OCR-Ergebnis leer | `brew install tesseract tesseract-lang` |
 | Ollama antwortet nicht | `ollama serve` in separatem Terminal starten |
-| `phi3:mini` nicht gefunden | `ollama pull phi3:mini` oder KI-Einrichtung-Tab nutzen |
+| Ollama-Modell nicht gefunden | Modellname im KI-Tab prüfen, dann `ollama pull <modell>` oder direkt aus der App laden |
 | Google GenAI Fehler | API-Schlüssel im KI-Tab prüfen |
 | PyQt6 Import-Fehler | `.venv` aktiv? `source .venv/bin/activate` |
 | XMP-Fehler beim Schreiben | PDF schreibgeschützt oder in anderer App geöffnet |
